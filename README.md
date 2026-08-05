@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# TM17 ASRS
 
-## Getting Started
+Next.js application for survey submission, reporting, and administrative workflows. The application uses PostgreSQL for persistent data.
 
-First, run the development server:
+## Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 22 or newer
+- PostgreSQL 14 or newer, running locally or reachable over the network
+
+## PostgreSQL setup
+
+Create an application user and database. From a PostgreSQL administrator shell:
+
+```sql
+CREATE USER asrs WITH PASSWORD 'change-me';
+CREATE DATABASE asrs OWNER asrs;
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Create `.env.local` in the project root (or copy `.env.example`) and set the connection string:
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+```env
+DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+For a managed database that requires TLS, add `?sslmode=require` to the URL:
 
-## Learn More
+```env
+DATABASE_URL=postgresql://asrs:change-me@db.example.com:5432/asrs?sslmode=require
+```
 
-To learn more about Next.js, take a look at the following resources:
+Do not commit `.env.local` or a real password.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Launch locally
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Install dependencies and start the development server:
 
-## Deploy on Vercel
+```bash
+npm install
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Open [http://localhost:3000](http://localhost:3000).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+On its first successful connection, the application creates its PostgreSQL tables, indexes, and development seed data. You do not need to run a separate schema command for a new database.
+
+## Verify the database
+
+Connect with `psql` using the same connection URL:
+
+```bash
+psql "$DATABASE_URL"
+```
+
+Then inspect the initialized schema and seeded roles:
+
+```sql
+\dt
+SELECT * FROM user_type;
+```
+
+## Useful commands
+
+```bash
+npm run dev    # development server
+npm run build  # production build
+npm run start  # serve a production build
+npm test       # test suite
+npm run lint   # lint source files
+```
+
+## Deployment
+
+Set `DATABASE_URL` in the deployment provider's server-side environment configuration before starting the application. The database user needs permission to create and alter the application tables during initialization.
