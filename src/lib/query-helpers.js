@@ -1,5 +1,3 @@
-import { initializeDatabase, db } from '@/lib/db';
-
 function getPivotValueColumn(fieldType) {
   if (fieldType === 'number' || fieldType === 'rating') return 'sv.value_number';
   if (fieldType === 'date') return 'sv.value_date';

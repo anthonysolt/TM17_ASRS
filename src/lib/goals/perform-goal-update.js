@@ -33,7 +33,7 @@ function computeGoalScore(goal) {
 
 /**
  * Apply a partial patch to an initiative_goal row. Records progress history when current_value changes.
- * @param {import('better-sqlite3').Database} db
+ * @param {{ prepare(sql: string): { get(...values: unknown[]): unknown, run(...values: unknown[]): unknown } }} db
  * @param {Record<string, unknown>} existing - full row from initiative_goal
  * @param {Record<string, unknown>} updates - subset of allowed fields
  * @param {{ userEmail: string }} ctx

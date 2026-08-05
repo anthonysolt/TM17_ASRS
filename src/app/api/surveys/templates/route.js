@@ -236,12 +236,12 @@ export async function DELETE(request) {
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
     const tableExists = (tableName) =>
-      !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(tableName);
+      !!db.prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?').get(tableName);
 
     const deleteTx = db.transaction((id) => {
       const quoteSurveyIds = tableExists('surveys')
         ? db
-            .prepare(`SELECT id FROM surveys WHERE json_extract(responses, '$.templateId') = ?`)
+            .prepare(`SELECT id FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`)
             .all(id)
             .map((r) => r.id)
         : [];
@@ -252,7 +252,7 @@ export async function DELETE(request) {
       }
 
       if (tableExists('surveys')) {
-        db.prepare(`DELETE FROM surveys WHERE json_extract(responses, '$.templateId') = ?`).run(id);
+        db.prepare(`DELETE FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`).run(String(id));
       }
 
       if (tableExists('survey_distribution')) {

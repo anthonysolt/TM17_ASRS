@@ -8,8 +8,8 @@ This project implements a complete survey submission and reporting system with t
 ## Architecture
 
 ### Database
-- **Type**: SQLite (using `better-sqlite3`)
-- **Location**: `/data/surveys.db`
+- **Type**: PostgreSQL (using `pg` through the application database adapter)
+- **Connection**: `DATABASE_URL` (for example, `postgresql://asrs:password@localhost:5432/asrs`)
 - **Tables**:
   - `surveys`: Stores survey submissions
   - `reports`: Stores generated reports linked to surveys

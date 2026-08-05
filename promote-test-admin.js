@@ -1,8 +1,6 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { PostgresSyncDatabase } from './src/lib/postgres-sync.js';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'asrs.db');
-const db = Database(DB_PATH);
+const db = new PostgresSyncDatabase();
 
 console.log('Promoting test user to admin...\n');
 
@@ -38,4 +36,3 @@ try {
 
 console.log('\n✅ Done! Login with test@gmail.com / testing to see the User Management tab.');
 
-db.close();

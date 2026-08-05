@@ -1,25 +1,16 @@
 //Database may be causing errors. 
 
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { PostgresSyncDatabase } from '@/lib/postgres-sync';
 import { hashPassword, isPasswordHash } from '@/lib/auth/passwords';
 import { alertDb } from '@/lib/db-alerts';
 import { seedEgamingSurvey } from '@/app/manage-surveys/mauricesurvey';
 
 // Store the database file in <project>/data/asrs.db
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_PATH = path.join(DATA_DIR, 'asrs.db');
 
 // Ensure the data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 // Open (or create) the database — WAL mode for better concurrent read performance
-const db = Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const db = new PostgresSyncDatabase();
 
 // Track whether tables have been created this process lifetime
 let _initialized = false;
@@ -249,44 +240,14 @@ function initializeDatabase() {
 
   try {
     // ── Migrations for existing databases ──────────────────────────────
-    migrationAddFormColumns();
-    migrationFixFieldTableConstraint();
-    migrationRepairFieldBackupForeignKeys();
+    // The SQLite table-rebuild migrations are intentionally not run here.
+    // PostgreSQL keeps foreign keys and CHECK constraints in place on ALTER.
 
     // Migration: add created_at / updated_at to initiative table
     try { db.exec('ALTER TABLE initiative ADD COLUMN created_at TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE initiative ADD COLUMN updated_at TEXT'); } catch (e) { /* already exists */ }
     try { db.exec("UPDATE initiative SET created_at = datetime('now'), updated_at = datetime('now') WHERE created_at IS NULL"); } catch (e) { /* ignore */ }
 
-    // Migration: widen reports.status CHECK to include published/draft/archived
-    try {
-      const hasOldConstraint = db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='reports'"
-      ).get();
-      if (hasOldConstraint && hasOldConstraint.sql && !hasOldConstraint.sql.includes("'published'")) {
-        db.exec('DROP TABLE IF EXISTS reports_new');
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS reports_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            survey_id INTEGER REFERENCES surveys(id) ON DELETE CASCADE,
-            initiative_id INTEGER REFERENCES initiative(initiative_id),
-            name TEXT NOT NULL DEFAULT '',
-            description TEXT DEFAULT '',
-            status TEXT NOT NULL DEFAULT 'completed'
-              CHECK (status IN ('generating','completed','failed','published','draft','archived')),
-            created_by TEXT DEFAULT '',
-            report_data TEXT NOT NULL,
-            display_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now'))
-          );
-          INSERT INTO reports_new SELECT * FROM reports;
-          DROP TABLE reports;
-          ALTER TABLE reports_new RENAME TO reports;
-        `);
-      }
-    } catch (e) {
-      console.warn('[db] reports status migration:', e.message);
-    }
 
     // Migration: initiative_member table for membership management
     db.exec(`
@@ -709,7 +670,7 @@ function initializeDatabase() {
     try {
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
     } catch (err) {
-      if (!err.message.includes('duplicate column name')) {
+      if (!err.message.includes('duplicate column name') && !err.message.includes('already exists')) {
         throw err;
       }
     }
@@ -1087,7 +1048,7 @@ function initializeDatabase() {
   `).run();
 
     _initialized = true;
-    console.log('[db] SQLite database initialized at', DB_PATH);
+    console.log('[db] PostgreSQL database initialized');
   } catch (err) {
     console.error('[db] ===== CRITICAL ERROR DURING DATABASE INITIALIZATION =====');
     console.error('[db] Error:', err.message);

@@ -10,11 +10,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
     "next": "16.1.6",
     "nodemailer": "^8.0.1",
     "openai": "^4.67.0",
     "papaparse": "^5.5.3",
+    "pg": "^8.22.0",
+    "postgres": "^3.4.9",
+    "psql": "^0.0.1",
     "qrcode": "^1.5.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@vitest/coverage-v8": "^3.2.4",
+    "better-sqlite3": "^13.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",

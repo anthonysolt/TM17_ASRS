@@ -1,8 +1,6 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { PostgresSyncDatabase } from './src/lib/postgres-sync.js';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'asrs.db');
-const db = Database(DB_PATH);
+const db = new PostgresSyncDatabase();
 
 console.log('Adding password field to user table...');
 
@@ -11,7 +9,7 @@ try {
   db.exec(`ALTER TABLE user ADD COLUMN password TEXT;`);
   console.log('✓ Added password column');
 } catch (err) {
-  if (err.message.includes('duplicate column')) {
+  if (err.message.includes('duplicate column') || err.message.includes('already exists')) {
     console.log('✓ Password column already exists');
   } else {
     console.error('Error:', err.message);
@@ -40,4 +38,3 @@ try {
 
 console.log('\n✅ Done! You can now login with: test@gmail.com / testing');
 
-db.close();

@@ -26,7 +26,7 @@
  */
 
 /**
- * @param {import('better-sqlite3').Database} db
+ * @param {{ prepare(sql: string): { run(...values: unknown[]): unknown } }} db
  * @param {{
  *   event:       string,
  *   userEmail:   string,

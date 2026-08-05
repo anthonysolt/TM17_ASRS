@@ -11,20 +11,16 @@
  * ============================================================================
  */
 
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { PostgresSyncDatabase } from './src/lib/postgres-sync.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, 'data', 'asrs.db');
-const db = Database(DB_PATH);
+const db = new PostgresSyncDatabase();
 
 function addColumnIfNotExists(table, columnDef) {
   try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
     console.log(`✔  Added column: ${table}.${columnDef.split(' ')[0]}`);
   } catch (err) {
-    if (err.message.includes('duplicate column name')) {
+    if (err.message.includes('duplicate column name') || err.message.includes('already exists')) {
       console.log(`–  Column already exists: ${table}.${columnDef.split(' ')[0]}`);
     } else {
       throw err;
@@ -53,4 +49,3 @@ if (updated.changes > 0) {
 }
 
 console.log('\n✅ Migration complete.');
-db.close();
