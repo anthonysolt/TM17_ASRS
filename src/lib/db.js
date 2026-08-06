@@ -249,18 +249,6 @@ function initializeDatabase() {
     try { db.exec("UPDATE initiative SET created_at = datetime('now'), updated_at = datetime('now') WHERE created_at IS NULL"); } catch (e) { /* ignore */ }
 
 
-    // Migration: initiative_member table for membership management
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS initiative_member (
-        member_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        initiative_id INTEGER NOT NULL REFERENCES initiative(initiative_id) ON DELETE CASCADE,
-        user_id INTEGER NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
-        role TEXT NOT NULL DEFAULT 'participant',
-        joined_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(initiative_id, user_id)
-      )
-    `);
-
     // Migration: ensure public users have reporting.view permission
     try {
       const publicHasReporting = db.prepare(`
@@ -659,6 +647,17 @@ function initializeDatabase() {
       key TEXT PRIMARY KEY,
       value TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- This must follow initiative and user because PostgreSQL validates
+    -- foreign-key targets as each table is created.
+    CREATE TABLE IF NOT EXISTS initiative_member (
+      member_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      initiative_id INTEGER NOT NULL REFERENCES initiative(initiative_id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES user(user_id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'participant',
+      joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(initiative_id, user_id)
     );
     `);
 
