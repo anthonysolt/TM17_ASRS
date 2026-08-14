@@ -35,12 +35,12 @@ export async function GET(request, { params }) {
     const row = db.prepare(`
       SELECT
         i.*,
-        c.category_name,
+        MIN(c.category_name) AS category_name,
         (SELECT COUNT(*) FROM submission s WHERE s.initiative_id = i.initiative_id) AS submission_count,
         (SELECT COUNT(DISTINCT s.submitted_by_user_id) FROM submission s WHERE s.initiative_id = i.initiative_id AND s.submitted_by_user_id IS NOT NULL) AS participant_count,
-        (SELECT ROUND(AVG(
+        (SELECT AVG(
           CASE WHEN g.target_value > 0 THEN (g.current_value / g.target_value) * 100 ELSE 0 END
-        ), 1) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS avg_score
+        ) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS avg_score
       FROM initiative i
       LEFT JOIN initiative_category ic ON ic.initiative_id = i.initiative_id
       LEFT JOIN category c ON c.category_id = ic.category_id
@@ -98,7 +98,7 @@ export async function PUT(request, { params }) {
 
     return NextResponse.json({ success: true, initiative: toInitiativeDto(updated) });
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.code === '23505') {
       return NextResponse.json({ error: 'Initiative with the same name already exists' }, { status: 409 });
     }
     console.error('Error updating initiative:', error);

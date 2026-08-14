@@ -34,7 +34,7 @@ export async function GET(request, { params }) {
       LEFT JOIN user_type ut ON ut.user_type_id = u.user_type_id
       WHERE s.initiative_id = ?
         AND s.submitted_by_user_id IS NOT NULL
-      GROUP BY u.user_id
+      GROUP BY u.user_id, u.first_name, u.last_name, u.email, u.phone_number, ut.type
       ORDER BY MIN(s.submitted_at) DESC
     `).all(initiativeId);
 

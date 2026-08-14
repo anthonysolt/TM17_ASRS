@@ -29,7 +29,7 @@ export async function GET(request, { params }) {
     ).get(initiativeId).count;
 
     const avgResult = db.prepare(`
-      SELECT ROUND(AVG(sv.value_number), 1) as avg_score
+      SELECT AVG(sv.value_number) as avg_score
       FROM submission_value sv
       JOIN submission s ON s.submission_id = sv.submission_id
       JOIN field f ON f.field_id = sv.field_id
@@ -42,7 +42,9 @@ export async function GET(request, { params }) {
 
     const summary = {
       totalParticipants: submissionCount,
-      averageRating: avgResult?.avg_score ?? 0,
+      averageRating: avgResult?.avg_score != null
+        ? Math.round(Number(avgResult.avg_score) * 10) / 10
+        : 0,
       completionRate: totalForms > 0
         ? Math.round((submissionCount / Math.max(submissionCount, 1)) * 100 * 10) / 10
         : 0,

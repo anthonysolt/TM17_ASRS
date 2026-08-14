@@ -18,12 +18,18 @@ function mkRequest() {
 
 describe('/api/notifications GET', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-11T12:00:00.000Z'));
     prepareMock.mockReset();
     requireAuthMock.mockReset();
     getServiceContainerMock.mockReturnValue({ db: { prepare: prepareMock } });
     requireAuthMock.mockReturnValue({
       user: { user_id: 3, email: 'public@test.com', user_type: 'public' },
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   test('returns only active surveys and published reports for public users', async () => {

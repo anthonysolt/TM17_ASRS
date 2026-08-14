@@ -33,7 +33,7 @@ export async function GET(request) {
       SELECT sd.distribution_id, sd.title, sd.created_at, sd.start_date, sd.end_date, sd.status,
              i.initiative_name
       FROM survey_distribution sd
-      LEFT JOIN form f ON sd.survey_template_id = f.form_id
+      LEFT JOIN form f ON sd.survey_template_id = CAST(f.form_id AS TEXT)
       LEFT JOIN initiative i ON f.initiative_id = i.initiative_id
       ORDER BY sd.created_at DESC
       LIMIT 20

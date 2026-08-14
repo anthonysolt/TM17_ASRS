@@ -100,7 +100,7 @@ export async function POST(request) {
       { status: 201 }
     );
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.code === '23505') {
       return NextResponse.json(
         { error: 'Initiative is already assigned to this category' },
         { status: 409 }

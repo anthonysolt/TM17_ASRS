@@ -12,8 +12,10 @@
  */
 export async function getInitiatives() {
   const response = await fetch('/api/initiatives');
+  if (!response.ok) return [];
+
   const data = await response.json();
-  return data.initiatives;
+  return Array.isArray(data.initiatives) ? data.initiatives : [];
 }
 
 /**

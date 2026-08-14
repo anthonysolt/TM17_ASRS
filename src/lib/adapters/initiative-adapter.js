@@ -24,7 +24,7 @@ export function toInitiativeDto(row) {
     category: row.category_name || settings.category || null,
     participant_count: row.participant_count != null ? Number(row.participant_count) : 0,
     submission_count: row.submission_count != null ? Number(row.submission_count) : 0,
-    avg_score: row.avg_score != null ? Number(row.avg_score) : 0,
+    avg_score: row.avg_score != null ? Math.round(Number(row.avg_score) * 10) / 10 : 0,
     created_at: row.created_at || null,
     updated_at: row.updated_at || null,
   };

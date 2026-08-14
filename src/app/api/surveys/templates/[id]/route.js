@@ -219,19 +219,27 @@ export async function DELETE(request, context) {
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
     const deleteTx = db.transaction((id) => {
-      const affectedSurveyIds = db.prepare(`
-        SELECT id FROM surveys
-        WHERE json_extract(responses, '$.templateId') = ?
-      `).all(id).map((r) => r.id);
+      const affectedSurveyIds = db.prepare('SELECT id, responses FROM surveys').all()
+        .filter((survey) => {
+          try {
+            return Number(JSON.parse(survey.responses)?.templateId) === id;
+          } catch {
+            return false;
+          }
+        })
+        .map((survey) => survey.id);
 
       if (affectedSurveyIds.length) {
         const deleteReport = db.prepare('DELETE FROM reports WHERE survey_id = ?');
         affectedSurveyIds.forEach((sid) => deleteReport.run(sid));
       }
 
-      db.prepare(`DELETE FROM surveys WHERE json_extract(responses, '$.templateId') = ?`).run(id);
+      if (affectedSurveyIds.length) {
+        const deleteSurvey = db.prepare('DELETE FROM surveys WHERE id = ?');
+        affectedSurveyIds.forEach((surveyId) => deleteSurvey.run(surveyId));
+      }
       db.prepare('DELETE FROM submission WHERE form_id = ?').run(id);
-      db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(id);
+      db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
       db.prepare('DELETE FROM form WHERE form_id = ?').run(id);
     });
 

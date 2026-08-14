@@ -329,16 +329,17 @@ export async function GET(request) {
     const lastScannedAt = lastScanResult?.scanned_at || null;
 
     // Get scans grouped by date (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const scansByDate = db.prepare(`
       SELECT
         DATE(scanned_at) as date,
         COUNT(*) as count
       FROM qr_scans
       WHERE qr_code_id = ?
-        AND scanned_at >= datetime('now', '-30 days')
+        AND scanned_at >= ?
       GROUP BY DATE(scanned_at)
       ORDER BY date DESC
-    `).all(qrCode.qr_code_id);
+    `).all(qrCode.qr_code_id, thirtyDaysAgo);
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4: Return Statistics

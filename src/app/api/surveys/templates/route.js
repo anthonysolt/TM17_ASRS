@@ -256,7 +256,7 @@ export async function DELETE(request) {
       }
 
       if (tableExists('survey_distribution')) {
-        db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(id);
+        db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
       }
 
       if (tableExists('form')) {

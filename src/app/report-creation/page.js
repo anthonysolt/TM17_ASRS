@@ -76,12 +76,20 @@ export default function ReportCreationPage() {
   // Load initiatives on mount
   useEffect(() => {
     async function loadInitiatives() {
-      const data = await getInitiatives();
-      setInitiatives(data);
-      if (data.length > 0) {
-        setReportConfig(prev => ({ ...prev, selectedInitiative: data[0] }));
+      try {
+        const data = await getInitiatives();
+        setInitiatives(data);
+        if (data.length > 0) {
+          setReportConfig(prev => ({ ...prev, selectedInitiative: data[0] }));
+        } else {
+          setErrorMessage('No initiatives are available. Please refresh or contact an administrator.');
+        }
+      } catch {
+        setInitiatives([]);
+        setErrorMessage('Unable to load initiatives. Please try again.');
+      } finally {
+        setDraftLoaded(true);
       }
-      setDraftLoaded(true);
     }
     loadInitiatives();
     fetchReports();

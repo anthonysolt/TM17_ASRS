@@ -157,7 +157,7 @@ export async function POST(request) {
       const row = db.prepare(`${getBudgetSelectSql()} WHERE b.budget_id = ?`).get(budgetId);
       return NextResponse.json({ success: true, budget: row });
     } catch (error) {
-      if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || String(error.message).includes('UNIQUE constraint failed')) {
+      if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === '23505' || String(error.message).includes('UNIQUE constraint failed')) {
         return NextResponse.json({ error: 'A budget already exists for this initiative and fiscal year' }, { status: 409 });
       }
       throw error;
@@ -233,7 +233,7 @@ export async function PUT(request) {
       const row = db.prepare(`${getBudgetSelectSql()} WHERE b.budget_id = ?`).get(budgetId);
       return NextResponse.json({ success: true, budget: row });
     } catch (error) {
-      if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || String(error.message).includes('UNIQUE constraint failed')) {
+      if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === '23505' || String(error.message).includes('UNIQUE constraint failed')) {
         return NextResponse.json({ error: 'A budget already exists for this initiative and fiscal year' }, { status: 409 });
       }
       throw error;

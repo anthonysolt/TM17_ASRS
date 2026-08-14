@@ -287,7 +287,7 @@ export async function POST(request) {
 
     // Check for unique constraint violation (duplicate qr_code_key)
     // This is extremely rare but possible
-    if (error.message && error.message.includes('UNIQUE constraint failed')) {
+    if (error.code === '23505' || (error.message && error.message.includes('UNIQUE constraint failed'))) {
       return NextResponse.json(
         {
           error: 'QR code key collision',

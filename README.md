@@ -30,6 +30,26 @@ DATABASE_URL=postgresql://asrs:change-me@db.example.com:5432/asrs?sslmode=requir
 
 Do not commit `.env.local` or a real password.
 
+## Initialize the database
+
+Schema and seed data are applied explicitly; the application does not create or
+alter database objects during startup.
+
+```bash
+npm run db:setup
+```
+
+This runs [`database/schema.sql`](database/schema.sql) followed by
+[`database/seed.sql`](database/seed.sql). Run it once for a new, empty database.
+The seed creates an administrator account:
+
+```text
+Username: admin@test.com
+Password: temporary1!
+```
+
+Change this temporary password after signing in.
+
 ## Launch locally
 
 Install dependencies and start the development server:
@@ -41,8 +61,6 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-On its first successful connection, the application creates its PostgreSQL tables, indexes, and development seed data. You do not need to run a separate schema command for a new database.
-
 ## Verify the database
 
 Connect with `psql` using the same connection URL:
@@ -51,17 +69,19 @@ Connect with `psql` using the same connection URL:
 psql "$DATABASE_URL"
 ```
 
-Then inspect the initialized schema and seeded roles:
+Then inspect the initialized schema and seeded administrator:
 
 ```sql
 \dt
 SELECT * FROM user_type;
+SELECT email, verified FROM "user" WHERE email = 'admin@test.com';
 ```
 
 ## Useful commands
 
 ```bash
 npm run dev    # development server
+npm run db:setup # initialize a new, empty database
 npm run build  # production build
 npm run start  # serve a production build
 npm test       # test suite

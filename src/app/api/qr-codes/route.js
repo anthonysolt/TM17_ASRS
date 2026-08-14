@@ -48,7 +48,7 @@ export async function GET(request) {
           OR (? = 'survey' AND q.qr_type IN ('survey', 'survey_template'))
           OR (? = 'report' AND q.qr_type = 'report')
         )
-        GROUP BY q.qr_code_id
+        GROUP BY q.qr_code_id, f.form_name
         ORDER BY q.created_at DESC
       `)
       .all(scope, scope, scope);
