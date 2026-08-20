@@ -2,7 +2,7 @@
 
 const STEPS = [
   { label: 'Configuration', icon: '1' },
-  { label: 'Trends', icon: '2' },
+  { label: 'Analysis', icon: '2' },
   { label: 'Preview & Generate', icon: '3' },
 ];
 

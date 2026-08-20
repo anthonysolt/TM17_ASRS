@@ -11,11 +11,12 @@ export async function GET(request) {
     if (auth.error) return auth.error;
 
     const fields = db.prepare(`
-      SELECT f.field_id, f.field_key, f.field_label, f.field_type, f.scope,
-             f.initiative_id, f.is_filterable, f.is_required_default, f.validation_rules,
-             i.initiative_name
+      SELECT f.field_id, f.field_key, f.field_label, f.field_type, f.scope, f.attribute_id,
+             f.initiative_id, f.is_filterable, f.is_required_default, f.is_reusable, f.validation_rules,
+             i.initiative_name, ia.name AS attribute_name, ia.data_type AS attribute_data_type
       FROM field f
       LEFT JOIN initiative i ON f.initiative_id = i.initiative_id
+      LEFT JOIN initiative_attribute ia ON ia.attribute_id = f.attribute_id
       ORDER BY f.scope, f.field_id
     `).all();
 
@@ -32,6 +33,7 @@ export async function GET(request) {
         ...field,
         validation_rules: field.validation_rules ? (() => { try { return JSON.parse(field.validation_rules); } catch { return field.validation_rules; } })() : null,
         field_options: options,
+        options: options.map(option => option.option_value),
       };
     });
 
@@ -60,7 +62,7 @@ export async function POST(request) {
     if (auth.error) return auth.error;
 
     const body = await request.json();
-    const { field_key, field_label, field_type, scope, initiative_id, options, validation_rules, is_filterable } = body || {};
+    const { field_key, field_label, field_type, scope, initiative_id, attribute_id, options, validation_rules, is_filterable } = body || {};
 
     if (!field_key || !field_label || !field_type || !scope) {
       return new Response(JSON.stringify({ error: 'Missing required fields: field_key, field_label, field_type, scope' }), {
@@ -100,16 +102,24 @@ export async function POST(request) {
 
     const validationRulesStr = validation_rules ? JSON.stringify(validation_rules) : null;
 
+    if (attribute_id) {
+      const attribute = db.prepare('SELECT initiative_id FROM initiative_attribute WHERE attribute_id = ?').get(Number(attribute_id));
+      if (!attribute || (initiative_id && Number(attribute.initiative_id) !== Number(initiative_id))) {
+        return Response.json({ error: 'attribute_id must belong to the selected initiative' }, { status: 400 });
+      }
+    }
+
     const createField = db.transaction(() => {
       const result = db.prepare(`
-        INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable, validation_rules)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, attribute_id, is_filterable, validation_rules)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         field_key,
         field_label,
         field_type,
         scope,
         initiative_id ?? null,
+        attribute_id ?? null,
         is_filterable ? 1 : 0,
         validationRulesStr,
       );
@@ -191,7 +201,7 @@ export async function PUT(request) {
     }
 
     const body = await request.json();
-    const { field_label, field_type, scope, initiative_id, is_filterable, validation_rules, options } = body || {};
+    const { field_label, field_type, scope, initiative_id, attribute_id, is_filterable, validation_rules, options } = body || {};
 
     if (field_type && !VALID_TYPES.includes(field_type)) {
       return new Response(JSON.stringify({ error: `Invalid field_type. Must be one of: ${VALID_TYPES.join(', ')}` }), {
@@ -220,6 +230,16 @@ export async function PUT(request) {
     if (field_type !== undefined) updates.field_type = field_type;
     if (scope !== undefined) updates.scope = scope;
     if (initiative_id !== undefined) updates.initiative_id = initiative_id;
+    if (attribute_id !== undefined) {
+      if (attribute_id !== null) {
+        const attribute = db.prepare('SELECT initiative_id FROM initiative_attribute WHERE attribute_id = ?').get(Number(attribute_id));
+        const effectiveInitiativeId = initiative_id ?? existing.initiative_id;
+        if (!attribute || (effectiveInitiativeId && Number(attribute.initiative_id) !== Number(effectiveInitiativeId))) {
+          return Response.json({ error: 'attribute_id must belong to the selected initiative' }, { status: 400 });
+        }
+      }
+      updates.attribute_id = attribute_id;
+    }
     if (is_filterable !== undefined) updates.is_filterable = is_filterable ? 1 : 0;
     if (validation_rules !== undefined) updates.validation_rules = JSON.stringify(validation_rules);
 
@@ -277,6 +297,41 @@ export async function PUT(request) {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+}
+
+// Removes a field from the reusable-question library without deleting the
+// field or breaking forms/submissions that already reference it.
+export async function PATCH(request) {
+  try {
+    const auth = requirePermission(request, db, 'forms.create');
+    if (auth.error) return auth.error;
+
+    const fieldId = Number(new URL(request.url).searchParams.get('fieldId'));
+    if (!Number.isInteger(fieldId) || fieldId <= 0) {
+      return Response.json({ error: 'Missing or invalid fieldId' }, { status: 400 });
+    }
+
+    const existing = db.prepare(
+      'SELECT field_id, field_key, field_label FROM field WHERE field_id = ?'
+    ).get(fieldId);
+    if (!existing) {
+      return Response.json({ error: 'Field not found' }, { status: 404 });
+    }
+
+    db.prepare('UPDATE field SET is_reusable = 0 WHERE field_id = ?').run(fieldId);
+    logAudit(db, {
+      event: 'field.reuse_removed',
+      userEmail: auth.user?.email,
+      targetType: 'field',
+      targetId: String(fieldId),
+      payload: { field_key: existing.field_key, field_label: existing.field_label },
+    });
+
+    return Response.json({ success: true, fieldId, is_reusable: 0 });
+  } catch (err) {
+    console.error('[admin/fields PATCH] Error:', err);
+    return Response.json({ error: err.message || String(err) }, { status: 500 });
   }
 }
 

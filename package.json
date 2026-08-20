@@ -5,6 +5,9 @@
   "scripts": {
     "db:schema": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/schema.sql",
     "db:seed": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/seed.sql",
+    "db:migrate:initiative-attributes": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260814_add_initiative_attributes.sql",
+    "db:migrate:field-reuse": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260816_add_field_reuse.sql",
+    "db:migrate:numeric-answers": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260816_backfill_numeric_submission_values.sql",
     "db:setup": "npm run db:schema && npm run db:seed",
     "db:fill-mock-data": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/fill_mock_data.sql",
     "db:remove-mock-data": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/remove_mock_data.sql",

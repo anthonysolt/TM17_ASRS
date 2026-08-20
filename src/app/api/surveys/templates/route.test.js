@@ -81,6 +81,14 @@ describe('/api/surveys/templates integration', () => {
     });
     expect((await POST(invalidReq)).status).toBe(400);
 
+    const initiativeId = Number(state.db.prepare(`
+      INSERT INTO initiative (initiative_name, attributes, questions, settings)
+      VALUES (?, '[]', '[]', '{}')
+    `).run('Readiness Initiative').lastInsertRowid);
+    const attributeId = Number(state.db.prepare(`
+      INSERT INTO initiative_attribute (name, data_type, initiative_id) VALUES (?, ?, ?)
+    `).run('Readiness Comment', 'text', initiativeId).lastInsertRowid);
+
     const validReq = new Request('http://localhost:3000/api/surveys/templates', {
       method: 'POST',
       headers: {
@@ -90,9 +98,10 @@ describe('/api/surveys/templates integration', () => {
       body: JSON.stringify({
         title: 'Readiness Survey',
         description: 'A readiness template',
+        initiative_id: initiativeId,
         questions: [
-          { text: { question: 'Q1', type: 'choice', required: true, options: ['yes', 'no'] } },
-          { text: { question: 'Q2', type: 'text', required: false } },
+          { text: { question: 'Q1', type: 'choice', required: true, options: ['yes', 'no'], save_for_reuse: true } },
+          { text: { question: 'Q2', type: 'text', required: false, attribute_id: attributeId, save_for_reuse: false } },
         ],
       }),
     });
@@ -106,10 +115,24 @@ describe('/api/surveys/templates integration', () => {
     const formCount = state.db.prepare('SELECT COUNT(*) AS c FROM form WHERE form_name = ?').get('Readiness Survey').c;
     const fieldCount = state.db.prepare('SELECT COUNT(*) AS c FROM field').get().c;
     const optionCount = state.db.prepare('SELECT COUNT(*) AS c FROM field_options').get().c;
+    const linkedField = state.db.prepare('SELECT attribute_id FROM field WHERE field_label = ?').get('Q2');
+    const multipleChoiceField = state.db.prepare(
+      'SELECT field_type, validation_rules FROM field WHERE field_label = ?'
+    ).get('Q1');
+    const reuseSettings = state.db.prepare(
+      'SELECT field_label, is_reusable FROM field ORDER BY field_label'
+    ).all();
 
     expect(formCount).toBe(1);
     expect(fieldCount).toBe(2);
     expect(optionCount).toBe(2);
+    expect(linkedField.attribute_id).toBe(attributeId);
+    expect(multipleChoiceField.field_type).toBe('text');
+    expect(JSON.parse(multipleChoiceField.validation_rules).ui_type).toBe('choice');
+    expect(reuseSettings).toEqual([
+      { field_label: 'Q1', is_reusable: 1 },
+      { field_label: 'Q2', is_reusable: 0 },
+    ]);
   });
 
   test('DELETE template removes template and related submissions/reports', async () => {
@@ -123,7 +146,9 @@ describe('/api/surveys/templates integration', () => {
       'INSERT INTO surveys (name, email, responses, submitted_at) VALUES (?, ?, ?, ?)' 
     ).run('User X', 'x@example.com', responseObj, '2026-03-24T00:00:00.000Z').lastInsertRowid);
 
-    state.db.prepare('INSERT INTO reports (survey_id, report_data, created_at) VALUES (?, ?, ?)').run(surveyId, JSON.stringify({ summary: 'x' }), '2026-03-24T00:00:00.000Z');
+    const reportId = Number(state.db.prepare('INSERT INTO reports (survey_id, report_data, created_at) VALUES (?, ?, ?)')
+      .run(surveyId, JSON.stringify({ summary: 'x' }), '2026-03-24T00:00:00.000Z').lastInsertRowid);
+    state.db.prepare('INSERT INTO report_generation_log (report_id) VALUES (?)').run(reportId);
 
     const res = await DELETE(new Request(`http://localhost:3000/api/surveys/templates?templateId=${formId}`, { method: 'DELETE' }));
     const body = await res.json();
@@ -133,5 +158,6 @@ describe('/api/surveys/templates integration', () => {
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM form WHERE form_id = ?').get(formId).c).toBe(0);
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM surveys WHERE id = ?').get(surveyId).c).toBe(0);
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE survey_id = ?').get(surveyId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM report_generation_log WHERE report_id = ?').get(reportId).c).toBe(0);
   });
 });

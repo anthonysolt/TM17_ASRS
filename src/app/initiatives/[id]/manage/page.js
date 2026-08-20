@@ -7,42 +7,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
 
-const ATTRIBUTE_CATALOG = [
-  'Grade',
-  'School',
-  'Interest Level',
-  'Career Awareness',
-  'Participation Count',
-  'Session Rating',
-  'Completion Status',
-  'Safety Score',
-  'Project Completion',
-  'Team Size',
-  'Robot Performance',
-  'Attendance Rate',
-  'Reading Level',
-  'Award Type',
-  'Improvement Score',
-  'Semester',
-  'Bags Collected',
-  'Families Helped',
-  'Volunteer Count',
-  'Donation Value',
-  'Event Date',
-  'Event Type',
-  'Personal Best',
-  'Team Placement',
-  'Practice Attendance',
-  'Season',
-  'Proposal Topic',
-  'Score',
-  'Award Level',
-  'Reviewer Rating',
-  'Submission Date',
-  'Product Category',
-  'Innovation Score',
-  'Presentation Rating',
-  'Feasibility Score',
+const ATTRIBUTE_TYPE_OPTIONS = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' },
+  { value: 'boolean', label: 'Yes / No' },
+  { value: 'json', label: 'Multiple values' },
 ];
 
 export default function InitiativeManagePage({ params }) {
@@ -76,8 +46,10 @@ export default function InitiativeManagePage({ params }) {
   const [editDescription, setEditDescription] = useState('');
   const [editCategoryId, setEditCategoryId] = useState('');
   const [editSelectedAttributes, setEditSelectedAttributes] = useState([]);
+  const [editAttributeTypes, setEditAttributeTypes] = useState({});
   const [editCustomAttributes, setEditCustomAttributes] = useState([]);
   const [editNewAttribute, setEditNewAttribute] = useState('');
+  const [editNewAttributeType, setEditNewAttributeType] = useState('text');
   const [editStatus, setEditStatus] = useState('Active');
   const [editIsPublic, setEditIsPublic] = useState(false);
   const [editAddQuestions, setEditAddQuestions] = useState(false);
@@ -87,8 +59,9 @@ export default function InitiativeManagePage({ params }) {
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [dbCategories, setDbCategories] = useState([]);
+  const [sharedAttributes, setSharedAttributes] = useState([]);
 
-  const allAttributes = [...ATTRIBUTE_CATALOG, ...editCustomAttributes];
+  const allAttributes = [...new Set([...sharedAttributes.map(attribute => attribute.name), ...editCustomAttributes])];
 
   useEffect(() => {
     if (!hydrated) return;
@@ -105,6 +78,20 @@ export default function InitiativeManagePage({ params }) {
         if (data.categories) setDbCategories(data.categories);
       })
       .catch(err => console.error('Error fetching categories:', err));
+  }, []);
+
+  useEffect(() => {
+    apiFetch('/api/initiative-attributes?scope=all')
+      .then(response => response.ok ? response.json() : { attributes: [] })
+      .then(data => {
+        const attributes = data.attributes || [];
+        setSharedAttributes(attributes);
+        setEditAttributeTypes(prev => ({
+          ...Object.fromEntries(attributes.map(attribute => [attribute.name, attribute.data_type])),
+          ...prev,
+        }));
+      })
+      .catch(error => console.error('Error fetching shared attributes:', error));
   }, []);
 
   async function loadData() {
@@ -128,6 +115,9 @@ export default function InitiativeManagePage({ params }) {
         setEditName(init.name || '');
         setEditDescription(init.description || '');
         setEditSelectedAttributes(init.attributes || []);
+        setEditAttributeTypes(Object.fromEntries(
+          (init.attribute_variables || []).map(attribute => [attribute.name, attribute.data_type])
+        ));
         setEditStatus(init.settings?.status || 'Active');
         setEditIsPublic(!!init.settings?.isPublic);
         if (init.questions && init.questions.length > 0) {
@@ -135,8 +125,9 @@ export default function InitiativeManagePage({ params }) {
           setEditQuestions(init.questions);
         }
 
-        // Detect custom attributes (ones not in ATTRIBUTE_CATALOG)
-        const customs = (init.attributes || []).filter(a => !ATTRIBUTE_CATALOG.includes(a));
+        // Keep initiative-specific values visible if they predate the shared catalog.
+        const sharedNames = new Set(sharedAttributes.map(attribute => attribute.name));
+        const customs = (init.attributes || []).filter(a => !sharedNames.has(a));
         if (customs.length > 0) setEditCustomAttributes(customs);
       } else {
         setError('Initiative not found');
@@ -207,6 +198,10 @@ export default function InitiativeManagePage({ params }) {
 
   // ── Edit form handlers ──────────────────────────────
   function handleAttributeToggle(attribute) {
+    if (!editSelectedAttributes.includes(attribute)) {
+      const sharedType = sharedAttributes.find(item => item.name === attribute)?.data_type;
+      setEditAttributeTypes(prev => ({ ...prev, [attribute]: prev[attribute] || sharedType || 'text' }));
+    }
     setEditSelectedAttributes(prev =>
       prev.includes(attribute) ? prev.filter(a => a !== attribute) : [...prev, attribute]
     );
@@ -221,7 +216,9 @@ export default function InitiativeManagePage({ params }) {
     }
     setEditCustomAttributes(prev => [...prev, trimmed]);
     setEditSelectedAttributes(prev => [...prev, trimmed]);
+    setEditAttributeTypes(prev => ({ ...prev, [trimmed]: editNewAttributeType }));
     setEditNewAttribute('');
+    setEditNewAttributeType('text');
     setEditMessage('');
   }
 
@@ -256,6 +253,10 @@ export default function InitiativeManagePage({ params }) {
         name: editName.trim(),
         description: editDescription.trim(),
         attributes: editSelectedAttributes,
+        attribute_variables: editSelectedAttributes.map(attribute => ({
+          name: attribute,
+          data_type: editAttributeTypes[attribute] || 'text',
+        })),
         questions: cleanedQuestions,
         settings: { status: editStatus, isPublic: editIsPublic },
         categoryId: editCategoryId || null,
@@ -534,7 +535,7 @@ export default function InitiativeManagePage({ params }) {
                   </span>
                 </label>
                 {user?.user_type === 'admin' && (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <input
                       type="text"
                       value={editNewAttribute}
@@ -543,6 +544,16 @@ export default function InitiativeManagePage({ params }) {
                       style={{ ...inputStyle, width: 180, marginBottom: 0, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
                       {...focusHandlers}
                     />
+                    <select
+                      value={editNewAttributeType}
+                      onChange={(e) => setEditNewAttributeType(e.target.value)}
+                      aria-label="Answer type for custom attribute"
+                      style={{ ...inputStyle, width: 150, marginBottom: 0, fontSize: '0.85rem', padding: '0.4rem 0.6rem', cursor: 'pointer' }}
+                    >
+                      {ATTRIBUTE_TYPE_OPTIONS.map((type) => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={handleAddCustomAttribute}

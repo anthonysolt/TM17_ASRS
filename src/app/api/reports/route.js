@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
-import { queryTableData } from '@/lib/query-helpers';
+import {
+  queryInitiativeReportOptions,
+  querySelectedQuestionData,
+  queryTableData,
+} from '@/lib/query-helpers';
 import {
   validateReportCreatePayload,
   validateReportDeleteParams,
@@ -146,8 +150,68 @@ export async function POST(request) {
       return NextResponse.json({ error: 'No data found for this initiative' }, { status: 404 });
     }
 
-    const tableData = queryTableData(db, initiativeId);
     const attributes = safeParseJson(initiative.attributes, []);
+    const analysisSelections = payload.analysisSelections;
+    let reportOptions = null;
+    let tableData;
+    let analysisGroups = [];
+    let selectedFieldIds = null;
+    let columnsByFieldId = {};
+
+    if (analysisSelections) {
+      reportOptions = queryInitiativeReportOptions(db, initiativeId);
+      const attributesById = new Map(reportOptions.attributes.map((attribute) => [attribute.id, attribute]));
+      const questionsById = new Map(reportOptions.questions.map((question) => [question.id, question]));
+
+      for (const selection of analysisSelections.attributes) {
+        if (!attributesById.has(selection.id)) {
+          return NextResponse.json({ error: `Selected attribute ${selection.id} does not belong to this initiative` }, { status: 400 });
+        }
+      }
+      for (const selection of analysisSelections.questions) {
+        if (!questionsById.has(selection.id)) {
+          return NextResponse.json({ error: `Selected question ${selection.id} does not belong to this initiative` }, { status: 400 });
+        }
+      }
+
+      const selectedIdSet = new Set(analysisSelections.questions.map((selection) => selection.id));
+      analysisSelections.attributes.forEach((selection) => {
+        reportOptions.questions
+          .filter((question) => question.attributeId === selection.id)
+          .forEach((question) => selectedIdSet.add(question.id));
+      });
+      selectedFieldIds = [...selectedIdSet];
+      if (selectedFieldIds.length === 0) {
+        return NextResponse.json({ error: 'The selected attributes do not have any questions for this initiative' }, { status: 400 });
+      }
+
+      const selectedData = querySelectedQuestionData(db, initiativeId, selectedFieldIds);
+      tableData = selectedData.tableData;
+      columnsByFieldId = selectedData.columnsByFieldId;
+      analysisGroups = [
+        ...analysisSelections.attributes.map((selection) => {
+          const attribute = attributesById.get(selection.id);
+          const fieldIds = reportOptions.questions
+            .filter((question) => question.attributeId === selection.id)
+            .map((question) => question.id);
+          return {
+            type: 'attribute', id: selection.id, label: attribute.name,
+            fieldIds, variables: fieldIds.map((id) => columnsByFieldId[id]).filter(Boolean),
+            method: selection.method, thresholdPct: selection.thresholdPct,
+          };
+        }),
+        ...analysisSelections.questions.map((selection) => {
+          const question = questionsById.get(selection.id);
+          return {
+            type: 'question', id: selection.id, label: question.label,
+            fieldIds: [selection.id], variables: [columnsByFieldId[selection.id]].filter(Boolean),
+            method: selection.method, thresholdPct: selection.thresholdPct,
+          };
+        }),
+      ];
+    } else {
+      tableData = queryTableData(db, initiativeId);
+    }
 
     // Compute summary from real submission data
     const submissionCount = db.prepare(
@@ -177,18 +241,26 @@ export async function POST(request) {
     };
 
     // Compute chart data from real submission values
-    const chartFields = db.prepare(`
-      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
+    let chartFields = db.prepare(`
+      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type,
+             ia.name AS attribute_name
       FROM field f
+      LEFT JOIN initiative_attribute ia ON ia.attribute_id = f.attribute_id
       JOIN form_field ff ON ff.field_id = f.field_id
       JOIN form fm ON fm.form_id = ff.form_id
       WHERE fm.initiative_id = ?
     `).all(initiativeId);
+    if (selectedFieldIds) {
+      const selectedSet = new Set(selectedFieldIds);
+      chartFields = chartFields.filter((field) => selectedSet.has(Number(field.field_id)));
+    }
 
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
     for (const field of chartFields) {
-      const key = field.field_key || field.field_label;
+      const key = selectedFieldIds
+        ? (columnsByFieldId[Number(field.field_id)] || field.field_label)
+        : (field.attribute_name || field.field_key || field.field_label);
 
       if (['select', 'choice', 'multiselect', 'yesno', 'boolean'].includes(field.field_type)) {
         const distribution = db.prepare(`
@@ -259,12 +331,27 @@ export async function POST(request) {
       ? Object.keys(tableData[0]).filter(k => k !== 'submission_id' && k !== 'submitted_at')
       : [];
     const allAvailableAttributes = [...new Set([...attributes, ...tableColumns])];
-    const trendConfigValidation = reportEngine.validateTrendConfig(incomingTrendConfig, allAvailableAttributes);
-    if (!trendConfigValidation.valid) {
-      return NextResponse.json({ error: trendConfigValidation.error }, { status: 400 });
+    let trendConfig;
+    if (analysisSelections) {
+      trendConfig = {
+        enabledCalc: true,
+        enabledDisplay: true,
+        groups: analysisGroups.map((group) => ({
+          variables: group.variables,
+          method: group.method,
+          thresholdPct: group.thresholdPct,
+        })),
+        variables: analysisGroups[0]?.variables || [],
+        method: analysisGroups[0]?.method || 'delta_halves',
+        thresholdPct: analysisGroups[0]?.thresholdPct ?? 2,
+      };
+    } else {
+      const trendConfigValidation = reportEngine.validateTrendConfig(incomingTrendConfig, allAvailableAttributes);
+      if (!trendConfigValidation.valid) {
+        return NextResponse.json({ error: trendConfigValidation.error }, { status: 400 });
+      }
+      trendConfig = trendConfigValidation.normalized;
     }
-
-    const trendConfig = trendConfigValidation.normalized;
 
     generationLogId = startGenerationLog(db, {
       initiativeId,
@@ -272,7 +359,9 @@ export async function POST(request) {
       filtersCount: Object.keys(filters).length,
       expressionsCount: expressions.length,
       sortsCount: sorts.length,
-      trendVariablesCount: trendConfig.variables.length,
+      trendVariablesCount: analysisSelections
+        ? analysisGroups.reduce((count, group) => count + group.variables.length, 0)
+        : trendConfig.variables.length,
     });
 
     const { filteredData, metrics, explainability } = reportEngine.processReportData(
@@ -280,13 +369,24 @@ export async function POST(request) {
       filters,
       expressions,
       sorts,
-      attributes
+      analysisSelections ? Object.values(columnsByFieldId) : attributes
     );
 
-    const trendData = reportEngine.computeTrendData(filteredData, trendConfig, {
-      initiativeId,
-      reportName: payload.name || '',
-    });
+    const trendData = analysisSelections
+      ? analysisGroups.flatMap((group) => reportEngine.computeTrendData(filteredData, {
+        variables: group.variables,
+        enabledCalc: true,
+        enabledDisplay: true,
+        method: group.method,
+        thresholdPct: group.thresholdPct,
+      }, {
+        initiativeId,
+        reportName: `${payload.name || ''}:${group.type}:${group.id}`,
+      }).map((trend) => ({ ...trend, selectionType: group.type, selectionId: group.id, selectionLabel: group.label })))
+      : reportEngine.computeTrendData(filteredData, trendConfig, {
+        initiativeId,
+        reportName: payload.name || '',
+      });
 
     // Optional AI insights generation
     let aiInsights = null;
@@ -327,6 +427,10 @@ export async function POST(request) {
         expressions,
         sorts,
         trendConfig,
+        analysisSelections: analysisSelections ? {
+          attributes: analysisGroups.filter((group) => group.type === 'attribute'),
+          questions: analysisGroups.filter((group) => group.type === 'question'),
+        } : undefined,
       },
       results: {
         metrics,

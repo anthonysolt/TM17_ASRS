@@ -22,7 +22,10 @@ export default function StepConfig({ initiatives, reportConfig, onChange }) {
             value={reportConfig.selectedInitiative?.id || ''}
             onChange={(e) => {
               const initiative = initiatives.find(i => i.id === Number(e.target.value));
-              onChange({ selectedInitiative: initiative });
+              onChange({
+                selectedInitiative: initiative,
+                analysisSelections: { attributes: [], questions: [] },
+              });
             }}
           >
             {initiatives.map(i => (

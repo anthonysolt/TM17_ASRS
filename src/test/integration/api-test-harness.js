@@ -52,6 +52,15 @@ export function createTestDb() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE initiative_attribute (
+      attribute_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      data_type TEXT NOT NULL DEFAULT 'text',
+      initiative_id INTEGER NOT NULL,
+      UNIQUE (initiative_id, name),
+      FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id) ON DELETE CASCADE
+    );
+
     CREATE TABLE submission (
       submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
       initiative_id INTEGER NOT NULL,
@@ -129,9 +138,12 @@ export function createTestDb() {
       field_type TEXT NOT NULL,
       scope TEXT NOT NULL DEFAULT 'common',
       initiative_id INTEGER,
+      attribute_id INTEGER,
       is_filterable INTEGER NOT NULL DEFAULT 0,
       is_required_default INTEGER NOT NULL DEFAULT 0,
-      validation_rules TEXT
+      is_reusable INTEGER NOT NULL DEFAULT 1,
+      validation_rules TEXT,
+      FOREIGN KEY (attribute_id) REFERENCES initiative_attribute(attribute_id) ON DELETE SET NULL
     );
 
     CREATE TABLE form_field (
@@ -185,6 +197,21 @@ export function createTestDb() {
       display_order INTEGER DEFAULT 0,
       FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id),
       FOREIGN KEY (survey_id) REFERENCES surveys(id)
+    );
+
+    CREATE TABLE report_generation_log (
+      log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_id INTEGER,
+      FOREIGN KEY (report_id) REFERENCES reports(id)
+    );
+
+    CREATE TABLE survey_distribution (
+      distribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_template_id TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      response_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE qr_codes (

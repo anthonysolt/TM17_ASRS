@@ -87,10 +87,12 @@ export default function TopBar({ title }) {
     const timeoutId = setTimeout(() => {
       fetchNotifications();
     }, 0);
-    const interval = setInterval(fetchNotifications, 30000);
+    // Notification polling is disabled to avoid repeatedly calling
+    // /api/notifications every 30 seconds.
+    // const interval = setInterval(fetchNotifications, 30000);
     return () => {
       clearTimeout(timeoutId);
-      clearInterval(interval);
+      // clearInterval(interval);
     };
   }, [fetchNotifications]);
 

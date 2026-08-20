@@ -5,6 +5,7 @@ import { getServiceContainer } from '@/lib/container/service-container';
 import { logAudit } from '@/lib/audit';
 import { toInitiativeCreateInput, toInitiativeDto } from '@/lib/adapters/initiative-adapter';
 import { requireAuth, requirePermission } from '@/lib/auth/server-auth';
+import { syncInitiativeAttributes } from '@/lib/initiative-attributes';
 
 const INITIATIVES_PATH = path.join(process.cwd(), 'src', 'data', 'initiatives.json');
 
@@ -80,6 +81,11 @@ export async function POST(request) {
     );
 
     const row = db.prepare('SELECT * FROM initiative WHERE initiative_id = ?').get(Number(result.lastInsertRowid));
+    syncInitiativeAttributes(
+      db,
+      Number(result.lastInsertRowid),
+      Array.isArray(body.attribute_variables) ? body.attribute_variables : input.attributes
+    );
 
     // Sync full initiative list back to JSON seed file
     await syncInitiativesToJson(db);

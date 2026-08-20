@@ -89,6 +89,10 @@ export default function ReportViewPage() {
     const sorts = snapshotConfig.sorts || [];
     const trendConfig = snapshotConfig.trendConfig || null;
     const hasTrendVariables = (trendConfig?.variables || []).length > 0;
+    const analysisSelections = snapshotConfig.analysisSelections || null;
+    const analysisItems = analysisSelections
+      ? [...(analysisSelections.attributes || []), ...(analysisSelections.questions || [])]
+      : [];
 
     if (filterEntries.length === 0 && expressions.length === 0 && sorts.length === 0 && !hasTrendVariables) {
       return null;
@@ -129,6 +133,14 @@ export default function ReportViewPage() {
               <span style={{ fontWeight: '600', color: '#6B7280' }}>Trends: </span>
               Variables ({trendConfig.variables.join(', ')}), method {trendConfig.method || 'delta_halves'}, threshold {trendConfig.thresholdPct ?? 2}%,
               display {trendConfig.enabledDisplay === false ? 'off' : 'on'}
+            </div>
+          )}
+          {analysisItems.length > 0 && (
+            <div>
+              <span style={{ fontWeight: '600', color: '#6B7280' }}>Analysis: </span>
+              {analysisItems.map((item) =>
+                `${item.type === 'attribute' ? 'Attribute' : 'Question'}: ${item.label} (${item.method === 'linear_slope' ? 'Linear Slope' : 'Half-to-Half Delta'})`
+              ).join(', ')}
             </div>
           )}
         </div>

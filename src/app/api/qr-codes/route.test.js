@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/server-auth', () => ({
   requireAuth: requirePermissionMock,
 }));
 
-import { GET } from '@/app/api/qr-codes/route';
+import { DELETE, GET } from '@/app/api/qr-codes/route';
 
 describe('/api/qr-codes GET', () => {
   beforeEach(() => {
@@ -62,5 +62,64 @@ describe('/api/qr-codes GET', () => {
     expect(payload.qrCodes).toHaveLength(1);
     expect(payload.qrCodes[0].stats.conversionRate).toBe(25);
     expect(payload.qrCodes[0].isActive).toBe(true);
+  });
+});
+
+describe('/api/qr-codes DELETE', () => {
+  beforeEach(() => {
+    prepareMock.mockReset();
+    requirePermissionMock.mockReset();
+  });
+
+  test('returns 400 when qrCodeId is invalid', async () => {
+    requirePermissionMock.mockReturnValue({ user: { email: 'admin@test.com' } });
+
+    const res = await DELETE(new Request('http://localhost:3000/api/qr-codes?qrCodeId=bad', {
+      method: 'DELETE',
+    }));
+
+    expect(res.status).toBe(400);
+  });
+
+  test('deletes a survey QR code and its audit entry', async () => {
+    requirePermissionMock.mockReturnValue({ user: { email: 'admin@test.com' } });
+    const deleteRun = vi.fn(() => ({ changes: 1 }));
+    const auditRun = vi.fn(() => ({ changes: 1 }));
+    prepareMock.mockImplementation((sql) => {
+      if (sql.includes('DELETE FROM qr_codes')) return { run: deleteRun };
+      if (sql.includes('INSERT INTO audit_log')) return { run: auditRun };
+      if (sql.includes('FROM qr_codes')) {
+        return {
+          get: vi.fn(() => ({
+            qr_code_id: 12,
+            qr_code_key: 'survey_qr_12',
+            qr_type: 'survey_template',
+            description: 'Spring survey',
+          })),
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    const res = await DELETE(new Request('http://localhost:3000/api/qr-codes?qrCodeId=12', {
+      method: 'DELETE',
+    }));
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(payload).toEqual({ success: true, qrCodeId: 12 });
+    expect(deleteRun).toHaveBeenCalledWith(12);
+    expect(auditRun).toHaveBeenCalledOnce();
+  });
+
+  test('does not delete report QR codes through the survey endpoint', async () => {
+    requirePermissionMock.mockReturnValue({ user: { email: 'admin@test.com' } });
+    prepareMock.mockReturnValue({ get: vi.fn(() => undefined) });
+
+    const res = await DELETE(new Request('http://localhost:3000/api/qr-codes?qrCodeId=99', {
+      method: 'DELETE',
+    }));
+
+    expect(res.status).toBe(404);
   });
 });

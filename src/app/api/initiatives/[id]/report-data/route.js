@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, initializeDatabase } from '@/lib/db';
-import { queryTableData } from '@/lib/query-helpers';
+import { querySelectedQuestionData, queryTableData } from '@/lib/query-helpers';
 import { requirePermission } from '@/lib/auth/server-auth';
 
 export async function GET(request, { params }) {
@@ -21,7 +21,11 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: 'Initiative not found' }, { status: 404 });
     }
 
-    const tableData = queryTableData(db, initiativeId);
+    const requestedFieldIds = new URL(request.url).searchParams.get('fieldIds')
+      ?.split(',').map(Number).filter((value) => Number.isFinite(value) && value > 0) || [];
+    const tableData = requestedFieldIds.length > 0
+      ? querySelectedQuestionData(db, initiativeId, requestedFieldIds).tableData
+      : queryTableData(db, initiativeId);
 
     // Compute summary from real submission data
     const submissionCount = db.prepare(
@@ -52,8 +56,10 @@ export async function GET(request, { params }) {
 
     // Compute chart data from real submission values
     const chartFields = db.prepare(`
-      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
+      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type,
+             ia.name AS attribute_name
       FROM field f
+      LEFT JOIN initiative_attribute ia ON ia.attribute_id = f.attribute_id
       JOIN form_field ff ON ff.field_id = f.field_id
       JOIN form fm ON fm.form_id = ff.form_id
       WHERE fm.initiative_id = ?
@@ -62,7 +68,7 @@ export async function GET(request, { params }) {
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
     for (const field of chartFields) {
-      const key = field.field_key || field.field_label;
+      const key = field.attribute_name || field.field_key || field.field_label;
 
       if (['select', 'choice', 'multiselect', 'yesno', 'boolean'].includes(field.field_type)) {
         const distribution = db.prepare(`

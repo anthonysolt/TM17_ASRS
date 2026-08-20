@@ -55,6 +55,10 @@ export function validateFieldValue(value, field, rules) {
 
 function validateType(value, field) {
   const { field_type } = field;
+  if (field_type === 'number' || field_type === 'rating') {
+    const number = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(number)) return 'Please enter a valid number';
+  }
   if (field_type === 'date') {
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
       const d = new Date(value);

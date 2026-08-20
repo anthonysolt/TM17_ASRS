@@ -37,6 +37,7 @@ export default function SurveyDistributionPage() {
   const [qrResult, setQrResult] = useState(null);
   const [qrCodes, setQrCodes] = useState([]);
   const [qrCodesLoading, setQrCodesLoading] = useState(false);
+  const [deletingQrCodeId, setDeletingQrCodeId] = useState(null);
 
   // ── Auth check ───────────────────────────────────────
   useEffect(() => {
@@ -112,6 +113,32 @@ export default function SurveyDistributionPage() {
   const handleDownloadQR = (qrCodeKey, format = 'png') => {
     const url = `/api/qr-codes/download?qrCodeKey=${qrCodeKey}&format=${format}&download=true`;
     window.open(url, '_blank');
+  };
+
+  const handleDeleteQR = async (qr) => {
+    const label = qr.description || qr.templateTitle || qr.qrCodeKey;
+    if (!window.confirm(`Delete the QR code "${label}"? Its scan history will also be deleted. This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingQrCodeId(qr.qrCodeId);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const res = await apiFetch(`/api/qr-codes?qrCodeId=${encodeURIComponent(qr.qrCodeId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to delete QR code');
+
+      setQrCodes((current) => current.filter((item) => item.qrCodeId !== qr.qrCodeId));
+      if (qrResult?.qrCodeKey === qr.qrCodeKey) setQrResult(null);
+      setSuccessMessage('QR code deleted successfully.');
+    } catch (err) {
+      setError(err.message || 'Failed to delete QR code');
+    } finally {
+      setDeletingQrCodeId(null);
+    }
   };
 
   // ── Email chip helpers ───────────────────────────────
@@ -736,6 +763,18 @@ export default function SurveyDistributionPage() {
                           }}
                         >
                           Copy Link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQR(qr)}
+                          disabled={deletingQrCodeId === qr.qrCodeId}
+                          style={{
+                            background: 'none', border: 'none', cursor: deletingQrCodeId === qr.qrCodeId ? 'not-allowed' : 'pointer',
+                            fontSize: '13px', fontWeight: '600', color: '#DC2626', padding: 0,
+                            opacity: deletingQrCodeId === qr.qrCodeId ? 0.6 : 1,
+                          }}
+                        >
+                          {deletingQrCodeId === qr.qrCodeId ? 'Deleting…' : 'Delete'}
                         </button>
                       </div>
                     </td>

@@ -28,6 +28,32 @@ describe('report-validation', () => {
     expect(result.valid).toBe(false);
   });
 
+  test('normalizes mixed attribute and question analysis selections', () => {
+    const result = validateReportCreatePayload({
+      initiativeId: 2,
+      analysisSelections: {
+        attributes: [{ id: 4, method: 'linear_slope', thresholdPct: 3 }],
+        questions: [{ id: 9, method: 'delta_halves' }],
+      },
+    });
+    expect(result.valid).toBe(true);
+    expect(result.value.analysisSelections).toEqual({
+      attributes: [{ id: 4, method: 'linear_slope', thresholdPct: 3 }],
+      questions: [{ id: 9, method: 'delta_halves', thresholdPct: 2 }],
+    });
+  });
+
+  test('requires a selection and rejects unsupported analysis methods', () => {
+    expect(validateReportCreatePayload({
+      initiativeId: 2,
+      analysisSelections: { attributes: [], questions: [] },
+    }).valid).toBe(false);
+    expect(validateReportCreatePayload({
+      initiativeId: 2,
+      analysisSelections: { attributes: [{ id: 4, method: 'median' }] },
+    }).valid).toBe(false);
+  });
+
   test('validates update payload', () => {
     const result = validateReportUpdatePayload({ id: 10, status: 'completed' });
     expect(result.valid).toBe(true);

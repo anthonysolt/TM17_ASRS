@@ -22,20 +22,6 @@ export default function InitiativeSelector({
   description = null,
 }) {
   /**
-   * Short name abbreviations for the initiative cards.
-   * These are displayed on small screens where the full name won't fit.
-   */
-  const shortNames = {
-    1: 'E-Gaming',
-    2: 'Robotics',
-    3: 'ELA Awards',
-    4: 'Bags2School',
-    5: 'Track Team',
-    6: 'Proposals',
-    7: 'Amazon'
-  };
-
-  /**
    * Colors for each initiative card's left border accent.
    * This adds visual variety so users can quickly identify initiatives.
    */
@@ -76,6 +62,7 @@ export default function InitiativeSelector({
         {initiatives.map((initiative, index) => {
           // Check if this card is the currently selected one
           const isSelected = selectedInitiative?.id === initiative.id;
+          const accentColor = accentColors[index % accentColors.length];
 
           return (
             <button
@@ -84,10 +71,10 @@ export default function InitiativeSelector({
               style={{
                 // Card base styles
                 background: isSelected ? 'white' : 'var(--color-bg-secondary)',
-                borderTop: isSelected ? `2px solid ${accentColors[index]}` : '2px solid transparent',
-                borderRight: isSelected ? `2px solid ${accentColors[index]}` : '2px solid transparent',
-                borderBottom: isSelected ? `2px solid ${accentColors[index]}` : '2px solid transparent',
-                borderLeft: `4px solid ${accentColors[index]}`,
+                borderTop: isSelected ? `2px solid ${accentColor}` : '2px solid transparent',
+                borderRight: isSelected ? `2px solid ${accentColor}` : '2px solid transparent',
+                borderBottom: isSelected ? `2px solid ${accentColor}` : '2px solid transparent',
+                borderLeft: `4px solid ${accentColor}`,
                 borderRadius: '10px',
                 padding: '0.875rem',
                 cursor: 'pointer',
@@ -100,11 +87,10 @@ export default function InitiativeSelector({
               <span style={{
                 fontSize: '0.85rem',
                 fontWeight: isSelected ? '700' : '500',
-                color: isSelected ? accentColors[index] : 'var(--color-text-primary)',
+                color: isSelected ? accentColor : 'var(--color-text-primary)',
                 display: 'block'
               }}>
-                {/* Show the short name on the card */}
-                {shortNames[initiative.id] || initiative.name}
+                {initiative.name || initiative.initiative_name || 'Unnamed initiative'}
               </span>
             </button>
           );

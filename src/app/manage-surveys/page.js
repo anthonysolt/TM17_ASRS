@@ -324,12 +324,6 @@ export default function ManageSurveysPage() {
                       Manage
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); router.push(`/survey?template=${template.id}`); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#6B7280', padding: 0 }}
-                    >
-                      Preview
-                    </button>
-                    <button
                       onClick={(e) => { e.stopPropagation(); deleteTemplate(template.id); }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#DC2626', padding: 0, marginLeft: 'auto' }}
                     >

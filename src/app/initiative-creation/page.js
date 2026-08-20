@@ -6,42 +6,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import ReasonModal from '@/components/ReasonModal';
 
-const ATTRIBUTE_CATALOG = [
-  'Grade',
-  'School',
-  'Interest Level',
-  'Career Awareness',
-  'Participation Count',
-  'Session Rating',
-  'Completion Status',
-  'Safety Score',
-  'Project Completion',
-  'Team Size',
-  'Robot Performance',
-  'Attendance Rate',
-  'Reading Level',
-  'Award Type',
-  'Improvement Score',
-  'Semester',
-  'Bags Collected',
-  'Families Helped',
-  'Volunteer Count',
-  'Donation Value',
-  'Event Date',
-  'Event Type',
-  'Personal Best',
-  'Team Placement',
-  'Practice Attendance',
-  'Season',
-  'Proposal Topic',
-  'Score',
-  'Award Level',
-  'Reviewer Rating',
-  'Submission Date',
-  'Product Category',
-  'Innovation Score',
-  'Presentation Rating',
-  'Feasibility Score',
+const ATTRIBUTE_TYPE_OPTIONS = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' },
+  { value: 'boolean', label: 'Yes / No' },
+  { value: 'json', label: 'Multiple values' },
 ];
 
 function statusPill(status) {
@@ -140,6 +110,9 @@ function InitiativeCreationContent() {
           setName(init.name || '');
           setDescription(init.description || '');
           setSelectedAttributes(init.attributes || []);
+          setAttributeTypes(Object.fromEntries(
+            (init.attribute_variables || []).map(attribute => [attribute.name, attribute.data_type])
+          ));
           setStatus(init.settings?.status || 'Active');
           setIsPublic(!!init.settings?.isPublic);
           if (init.questions && init.questions.length > 0) {
@@ -157,6 +130,7 @@ function InitiativeCreationContent() {
 
   // ── Categories from database ───────────────────────────
   const [dbCategories, setDbCategories] = useState([]);
+  const [sharedAttributes, setSharedAttributes] = useState([]);
 
   useEffect(() => {
     apiFetch('/api/categories')
@@ -167,13 +141,29 @@ function InitiativeCreationContent() {
       .catch(err => console.error('Error fetching categories:', err));
   }, []);
 
+  useEffect(() => {
+    apiFetch('/api/initiative-attributes?scope=all')
+      .then(response => response.ok ? response.json() : { attributes: [] })
+      .then(data => {
+        const attributes = data.attributes || [];
+        setSharedAttributes(attributes);
+        setAttributeTypes(prev => ({
+          ...Object.fromEntries(attributes.map(attribute => [attribute.name, attribute.data_type])),
+          ...prev,
+        }));
+      })
+      .catch(error => console.error('Error fetching shared attributes:', error));
+  }, []);
+
   // ── Create-form state ──────────────────────────────────
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [selectedAttributes, setSelectedAttributes] = useState([]);
+  const [attributeTypes, setAttributeTypes] = useState({});
   const [customAttributes, setCustomAttributes] = useState([]);
   const [newAttribute, setNewAttribute] = useState('');
+  const [newAttributeType, setNewAttributeType] = useState('text');
   const [addQuestions, setAddQuestions] = useState(false);
   const [questions, setQuestions] = useState(['']);
   const [status, setStatus] = useState('Active');
@@ -182,9 +172,13 @@ function InitiativeCreationContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
-  const allAttributes = [...ATTRIBUTE_CATALOG, ...customAttributes];
+  const allAttributes = [...new Set([...sharedAttributes.map(attribute => attribute.name), ...customAttributes])];
 
   const handleAttributeToggle = (attribute) => {
+    if (!selectedAttributes.includes(attribute)) {
+      const sharedType = sharedAttributes.find(item => item.name === attribute)?.data_type;
+      setAttributeTypes(prev => ({ ...prev, [attribute]: prev[attribute] || sharedType || 'text' }));
+    }
     setSelectedAttributes((prev) =>
       prev.includes(attribute)
         ? prev.filter((a) => a !== attribute)
@@ -206,7 +200,9 @@ function InitiativeCreationContent() {
 
     setCustomAttributes((prev) => [...prev, trimmed]);
     setSelectedAttributes((prev) => [...prev, trimmed]);
+    setAttributeTypes((prev) => ({ ...prev, [trimmed]: newAttributeType }));
     setNewAttribute('');
+    setNewAttributeType('text');
     setMessage('');
   };
 
@@ -255,6 +251,10 @@ function InitiativeCreationContent() {
           name: name.trim(),
           description: description.trim(),
           attributes: selectedAttributes,
+          attribute_variables: selectedAttributes.map(attribute => ({
+            name: attribute,
+            data_type: attributeTypes[attribute] || 'text',
+          })),
           questions: cleanedQuestions,
           settings: { status: effectiveStatus, isPublic },
           categoryId: categoryId || null,
@@ -326,8 +326,10 @@ function InitiativeCreationContent() {
           setDescription('');
           setCategoryId('');
           setSelectedAttributes([]);
+          setAttributeTypes({});
           setCustomAttributes([]);
           setNewAttribute('');
+          setNewAttributeType('text');
           setAddQuestions(false);
           setQuestions(['']);
           setStatus('Active');
@@ -433,12 +435,6 @@ function InitiativeCreationContent() {
                       <td>{statusPill(s)}</td>
                       {canCreate && (
                         <td>
-                          <span
-                            style={{ color: '#E67E22', cursor: 'pointer', fontSize: 13, fontWeight: 500, marginRight: 12 }}
-                            onClick={() => router.push(`/initiatives/${initiative.id}/manage`)}
-                          >
-                            Manage
-                          </span>
                           <span
                             style={{ color: '#E67E22', cursor: 'pointer', fontSize: 13, fontWeight: 500, marginRight: 12 }}
                             onClick={() => router.push(`/initiatives/${initiative.id}/manage?tab=edit`)}
@@ -585,7 +581,7 @@ function InitiativeCreationContent() {
                   </span>
                 </label>
                 {userRole === 'admin' && (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <input
                       type="text"
                       value={newAttribute}
@@ -595,6 +591,16 @@ function InitiativeCreationContent() {
                       onFocus={(e) => { e.target.style.borderColor = '#E67E22'; e.target.style.boxShadow = '0 0 0 3px rgba(230,126,34,.1)'; }}
                       onBlur={(e) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
                     />
+                    <select
+                      value={newAttributeType}
+                      onChange={(e) => setNewAttributeType(e.target.value)}
+                      aria-label="Answer type for custom attribute"
+                      style={{ ...inputStyle, width: 150, marginBottom: 0, fontSize: '0.85rem', padding: '0.4rem 0.6rem', cursor: 'pointer' }}
+                    >
+                      {ATTRIBUTE_TYPE_OPTIONS.map((type) => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
                     <button
                       type="button"
                       onClick={handleAddCustomAttribute}

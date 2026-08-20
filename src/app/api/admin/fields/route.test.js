@@ -6,7 +6,7 @@ const dbProxy = vi.hoisted(() => ({
 
 vi.mock('../../../../lib/db.js', () => ({ default: dbProxy }));
 
-import { GET, POST, PUT, DELETE } from '@/app/api/admin/fields/route';
+import { GET, POST, PUT, PATCH, DELETE } from '@/app/api/admin/fields/route';
 import {
   closeTestDb,
   createAuthedRequestHeaders,
@@ -54,6 +54,19 @@ describe('/api/admin/fields integration', () => {
     expect(payload.initiative_specific[0].field_key).toBe('init_field');
     expect(payload.staff_only).toHaveLength(1);
     expect(payload.staff_only[0].field_key).toBe('staff_field');
+  });
+
+  test('GET includes saved answer options for reusable questions', async () => {
+    const fieldId = Number(state.db.prepare(
+      'INSERT INTO field (field_key, field_label, field_type, scope) VALUES (?, ?, ?, ?)'
+    ).run('favorite_color', 'Favorite color?', 'select', 'common').lastInsertRowid);
+    state.db.prepare(
+      'INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?), (?, ?, ?, ?)'
+    ).run(fieldId, 'red', 'Red', 0, fieldId, 'blue', 'Blue', 1);
+
+    const payload = await (await GET()).json();
+    expect(payload.common[0].options).toEqual(['red', 'blue']);
+    expect(payload.common[0].field_options).toHaveLength(2);
   });
 
   test('POST creates a common field with validation_rules', async () => {
@@ -161,6 +174,23 @@ describe('/api/admin/fields integration', () => {
     const dbField = state.db.prepare('SELECT * FROM field WHERE field_id = ?').get(fieldId);
     expect(dbField.field_label).toBe('New Label');
     expect(JSON.parse(dbField.validation_rules)).toEqual({ maxLength: 255 });
+  });
+
+  test('PATCH removes a field from saved questions without deleting it', async () => {
+    const fieldId = Number(state.db.prepare(
+      'INSERT INTO field (field_key, field_label, field_type, scope, is_reusable) VALUES (?, ?, ?, ?, 1)'
+    ).run('reusable_field', 'Reusable Field', 'text', 'common').lastInsertRowid);
+
+    const res = await PATCH(new Request(
+      `http://localhost:3000/api/admin/fields?fieldId=${fieldId}`,
+      { method: 'PATCH' }
+    ));
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(payload).toEqual({ success: true, fieldId, is_reusable: 0 });
+    expect(state.db.prepare('SELECT is_reusable FROM field WHERE field_id = ?').get(fieldId))
+      .toEqual({ is_reusable: 0 });
   });
 
   test('DELETE removes a field and its options (via cascade)', async () => {

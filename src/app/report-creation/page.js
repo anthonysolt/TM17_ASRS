@@ -3,13 +3,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
-import { getInitiatives, getReportData } from '@/lib/data-service';
+import { getInitiatives, getReportData, getReportOptions } from '@/lib/data-service';
 
 import StepIndicator from '@/components/report-steps/StepIndicator';
 import StepConfig from '@/components/report-steps/StepConfig';
-import StepTrends from '@/components/report-steps/StepTrends';
+import StepAnalysis from '@/components/report-steps/StepAnalysis';
 import StepPreview from '@/components/report-steps/StepPreview';
-import { validateTrendConfig } from '@/lib/report-engine';
 import { getUiEventBus } from '@/lib/events/ui-event-bus';
 import EVENTS from '@/lib/events/event-types';
 import { apiFetch } from '@/lib/api/client';
@@ -42,7 +41,7 @@ export default function ReportCreationPage() {
     reportName: '',
     description: '',
     trendConfig: getDefaultTrendConfig(),
-    selectedAttributes: [],
+    analysisSelections: { attributes: [], questions: [] },
     startDate: '',
     endDate: '',
   });
@@ -51,6 +50,9 @@ export default function ReportCreationPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [reportOptions, setReportOptions] = useState({ attributes: [], questions: [] });
+  const [loadingReportOptions, setLoadingReportOptions] = useState(false);
+  const [reportOptionsError, setReportOptionsError] = useState('');
 
   // ---- REPORT HISTORY ----
   const [reports, setReports] = useState([]);
@@ -97,16 +99,50 @@ export default function ReportCreationPage() {
 
   // Load table data when initiative changes
   useEffect(() => {
+    let cancelled = false;
     async function loadTableData() {
       if (!reportConfig.selectedInitiative) {
         setTableData([]);
         return;
       }
-      const data = await getReportData(reportConfig.selectedInitiative.id);
-      setTableData(data?.tableData || []);
+      const analysis = reportConfig.analysisSelections || { attributes: [], questions: [] };
+      const fieldIds = new Set((analysis.questions || []).map((selection) => Number(selection.id)));
+      const selectedAttributeIds = new Set((analysis.attributes || []).map((selection) => Number(selection.id)));
+      reportOptions.questions
+        .filter((question) => selectedAttributeIds.has(Number(question.attributeId)))
+        .forEach((question) => fieldIds.add(Number(question.id)));
+      const data = await getReportData(reportConfig.selectedInitiative.id, [...fieldIds]);
+      if (!cancelled) setTableData(data?.tableData || []);
     }
     loadTableData();
-  }, [reportConfig.selectedInitiative]);
+    return () => { cancelled = true; };
+  }, [reportConfig.selectedInitiative, reportConfig.analysisSelections, reportOptions.questions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadReportOptions() {
+      const initiativeId = reportConfig.selectedInitiative?.id;
+      if (!initiativeId) {
+        setReportOptions({ attributes: [], questions: [] });
+        return;
+      }
+      setLoadingReportOptions(true);
+      setReportOptionsError('');
+      try {
+        const options = await getReportOptions(initiativeId);
+        if (!cancelled) setReportOptions(options);
+      } catch (error) {
+        if (!cancelled) {
+          setReportOptions({ attributes: [], questions: [] });
+          setReportOptionsError(error.message || 'Unable to load report options.');
+        }
+      } finally {
+        if (!cancelled) setLoadingReportOptions(false);
+      }
+    }
+    loadReportOptions();
+    return () => { cancelled = true; };
+  }, [reportConfig.selectedInitiative?.id]);
 
   useEffect(() => {
     const available = reportConfig.selectedInitiative?.attributes || [];
@@ -148,8 +184,8 @@ export default function ReportCreationPage() {
       return reportConfig.selectedInitiative && reportConfig.reportName.trim().length > 0;
     }
     if (currentStep === 1) {
-      // Trends step is always optional — user can proceed with or without trends
-      return true;
+      const selections = reportConfig.analysisSelections || {};
+      return (selections.attributes?.length || 0) + (selections.questions?.length || 0) > 0;
     }
     return true;
   }
@@ -165,20 +201,6 @@ export default function ReportCreationPage() {
     if (currentStep > 0) {
       setCurrentStep(prev => prev - 1);
       setErrorMessage('');
-    }
-  }
-
-  function handleSkip() {
-    // Only the Trends step (step 1) can be skipped
-    if (currentStep === 1) {
-      setReportConfig((prev) => ({
-        ...prev,
-        trendConfig: {
-          ...(prev.trendConfig || getDefaultTrendConfig()),
-          enabledCalc: false,
-        },
-      }));
-      handleNext();
     }
   }
 
@@ -200,8 +222,7 @@ export default function ReportCreationPage() {
           filters: {},
           expressions: [],
           sorts: [],
-          selectedAttributes: reportConfig.selectedAttributes,
-          trendConfig: reportConfig.trendConfig,
+          analysisSelections: reportConfig.analysisSelections,
           includeAiInsights: reportConfig.includeAiInsights || false,
         }),
       });
@@ -220,7 +241,7 @@ export default function ReportCreationPage() {
         reportName: '',
         description: '',
         trendConfig: getDefaultTrendConfig(),
-        selectedAttributes: [],
+        analysisSelections: { attributes: [], questions: [] },
         startDate: '',
         endDate: '',
         includeAiInsights: false,
@@ -280,16 +301,19 @@ export default function ReportCreationPage() {
         );
       case 1:
         return (
-          <StepTrends
+          <StepAnalysis
             reportConfig={reportConfig}
             onChange={updateConfig}
-            tableData={tableData}
+            reportOptions={reportOptions}
+            isLoading={loadingReportOptions}
+            error={reportOptionsError}
           />
         );
       case 2:
         return (
           <StepPreview
             reportConfig={reportConfig}
+            reportOptions={reportOptions}
             tableData={tableData}
             onGenerate={handleGenerate}
             isSubmitting={isSubmitting}
@@ -299,8 +323,6 @@ export default function ReportCreationPage() {
         return null;
     }
   }
-
-  const isOptionalStep = currentStep === 1;
 
   if (!authChecked) {
     return (
@@ -359,15 +381,6 @@ export default function ReportCreationPage() {
             </button>
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
-              {isOptionalStep && (
-                <button
-                  onClick={handleSkip}
-                  className="btn-outline"
-                  style={{ color: '#6B7280' }}
-                >
-                  Skip
-                </button>
-              )}
               <button
                 onClick={handleNext}
                 disabled={!canProceed()}

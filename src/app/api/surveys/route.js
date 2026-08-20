@@ -1,9 +1,20 @@
 import db, { initializeDatabase } from '@/lib/db';
-import { generateAIReport } from '@/lib/openai';
 import { NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { validateAndCleanSurvey, validateTemplateAnswers } from '@/lib/survey-validation';
 import { alertDb } from '@/lib/db-alerts';
+
+function resolveRules(fieldRulesJson, formFieldRulesJson) {
+  const parse = (value) => {
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return null; }
+  };
+  const base = parse(fieldRulesJson);
+  const override = parse(formFieldRulesJson);
+  if (!base && !override) return null;
+  return { ...base, ...override };
+}
 
 function toLocalYyyyMmDd(date) {
   const year = date.getFullYear();
@@ -19,10 +30,6 @@ export async function POST(request) {
 
     const body = await request.json();
     const cleaned = validateAndCleanSurvey(body);
-
-    // Basic stats and AI report (best-effort)
-    const basicStats = generateBasicStats(cleaned.responses);
-    const reportData = await generateAIReport(cleaned.responses, basicStats);
 
     // Duplicate submission guard: exact same email + responses JSON
     const responsesJSON = JSON.stringify(cleaned.responses);
@@ -54,7 +61,10 @@ export async function POST(request) {
 
             const getOptions = db.prepare(`SELECT option_value FROM field_options WHERE field_id = ? ORDER BY display_order`);
             for (const ff of formFields) {
-              if (['select', 'choice', 'multiselect'].includes(ff.field_type)) {
+              const rules = resolveRules(ff.field_rules, ff.form_field_rules);
+              const displayType = rules?.ui_type || ff.field_type;
+              ff.field_type = displayType;
+              if (['select', 'radio', 'choice', 'multiselect'].includes(displayType)) {
                 ff.options = getOptions.all(ff.field_id).map(o => o.option_value);
               }
             }
@@ -71,12 +81,10 @@ export async function POST(request) {
       }
     }
 
-    // Use a transaction so survey + report + distribution update are atomic
-    const insertSurveyAndReport = db.transaction((name, email, responsesJSONInner, reportJSON, templateId) => {
+    // Keep survey persistence and distribution counting atomic.
+    const insertSurvey = db.transaction((name, email, responsesJSONInner, templateId) => {
       const surveyInfo = db.prepare(`INSERT INTO surveys (name, email, responses) VALUES (?, ?, ?)`).run(name, email, responsesJSONInner);
       const surveyId = surveyInfo.lastInsertRowid;
-
-      db.prepare(`INSERT INTO reports (survey_id, report_data) VALUES (?, ?)`).run(surveyId, reportJSON);
 
       if (templateId) {
         const today = toLocalYyyyMmDd(new Date());
@@ -98,11 +106,10 @@ export async function POST(request) {
       return surveyId;
     });
 
-    const surveyId = insertSurveyAndReport(
+    const surveyId = insertSurvey(
       cleaned.name,
       cleaned.email,
       responsesJSON,
-      JSON.stringify(reportData),
       effectiveTemplateId
     );
 
@@ -120,10 +127,19 @@ export async function POST(request) {
             const submissionId = submissionInfo.lastInsertRowid;
 
             const insertVal = db.prepare(`INSERT INTO submission_value (submission_id, field_id, value_text, value_number, value_date, value_bool, value_json) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+            const getField = db.prepare(`
+              SELECT f.field_type
+              FROM field f
+              JOIN form_field ff ON ff.field_id = f.field_id
+              WHERE f.field_id = ? AND ff.form_id = ?
+              LIMIT 1
+            `);
 
             for (const [fieldKey, rawVal] of Object.entries(answers || {})) {
               const fieldId = Number(fieldKey);
               if (!fieldId) continue;
+              const field = getField.get(fieldId, formId);
+              if (!field) continue;
 
               let v_text = null;
               let v_number = null;
@@ -131,21 +147,17 @@ export async function POST(request) {
               let v_bool = null;
               let v_json = null;
 
-              if (rawVal === null || rawVal === undefined) {
+              if (rawVal === null || rawVal === undefined || rawVal === '') {
                 // leave all null
-              } else if (typeof rawVal === 'number') {
-                v_number = rawVal;
-              } else if (typeof rawVal === 'boolean') {
-                v_bool = rawVal ? 1 : 0;
-              } else if (typeof rawVal === 'object') {
+              } else if (field.field_type === 'number' || field.field_type === 'rating') {
+                const numericValue = Number(rawVal);
+                if (Number.isFinite(numericValue)) v_number = numericValue;
+              } else if (field.field_type === 'boolean' || field.field_type === 'yesno') {
+                v_bool = rawVal === true || rawVal === 1 || rawVal === '1' || rawVal === 'true' || rawVal === 'yes' ? 1 : 0;
+              } else if (field.field_type === 'date') {
+                v_date = String(rawVal);
+              } else if (field.field_type === 'json' || field.field_type === 'multiselect' || typeof rawVal === 'object') {
                 v_json = JSON.stringify(rawVal);
-              } else if (typeof rawVal === 'string') {
-                // ISO date-ish detection
-                if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2})?/.test(rawVal)) {
-                  v_date = rawVal;
-                } else {
-                  v_text = rawVal.slice(0, 1000);
-                }
               } else {
                 v_text = String(rawVal).slice(0, 1000);
               }
@@ -190,8 +202,6 @@ export async function POST(request) {
       surveyId: Number(surveyId),
       submittedAt: submissionInfo?.submittedAt || new Date().toISOString(),
       survey: submissionInfo,
-      report: reportData,
-      ai_configured: reportData?.aiGenerated !== false || !reportData?.error,
     });
   } catch (error) {
     const errorMessage = String(error?.message || '');
@@ -272,17 +282,54 @@ export async function DELETE(request) {
       return NextResponse.json({ error: 'Missing or invalid surveyId' }, { status: 400 });
     }
 
-    const deleteTransaction = db.transaction((id) => {
-      db.prepare('DELETE FROM reports WHERE survey_id = ?').run(id);
+    const survey = db.prepare('SELECT id, responses, submitted_at FROM surveys WHERE id = ?').get(surveyId);
+    if (!survey) {
+      return NextResponse.json({ error: 'Survey not found' }, { status: 404 });
+    }
+    let templateId = null;
+    try {
+      templateId = JSON.parse(survey.responses || '{}')?.templateId || null;
+    } catch {
+      // Malformed legacy responses should not prevent deletion.
+    }
+
+    const deleteTransaction = db.transaction((id, linkedTemplateId, submittedAt) => {
+      const reportIds = db.prepare('SELECT id FROM reports WHERE survey_id = ?').all(id).map(report => report.id);
+      if (reportIds.length > 0) {
+        const placeholders = reportIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM report_generation_log WHERE report_id IN (${placeholders})`).run(...reportIds);
+      }
+      const deletedReports = db.prepare('DELETE FROM reports WHERE survey_id = ?').run(id).changes;
+      const deletedSubmissions = linkedTemplateId
+        ? db.prepare('DELETE FROM submission WHERE form_id = ?').run(Number(linkedTemplateId)).changes
+        : 0;
+      const deletedQrCodes = db.prepare("DELETE FROM qr_codes WHERE qr_type = 'survey' AND target_id = ?").run(id).changes;
+
+      if (linkedTemplateId) {
+        const submittedDate = String(submittedAt || '').slice(0, 10);
+        const distribution = db.prepare(`
+          SELECT distribution_id
+          FROM survey_distribution
+          WHERE survey_template_id = ? AND ? BETWEEN start_date AND end_date
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).get(String(linkedTemplateId), submittedDate);
+        if (distribution) {
+          db.prepare(`
+            UPDATE survey_distribution
+            SET response_count = CASE WHEN response_count > 0 THEN response_count - 1 ELSE 0 END
+            WHERE distribution_id = ?
+          `).run(distribution.distribution_id);
+        }
+      }
+
       db.prepare('DELETE FROM surveys WHERE id = ?').run(id);
-      // If a `submission` table exists with a link, add cascade delete here as well:
-      // db.prepare('DELETE FROM submission WHERE survey_id = ?').run(id);
-      return true;
+      return { deletedReports, deletedSubmissions, deletedQrCodes };
     });
 
-    deleteTransaction(surveyId);
+    const deleted = deleteTransaction(surveyId, templateId, survey.submitted_at);
 
-    return NextResponse.json({ success: true, surveyId });
+    return NextResponse.json({ success: true, surveyId, deleted });
   } catch (error) {
     console.error('Error deleting survey:', error);
     return NextResponse.json(
@@ -290,38 +337,4 @@ export async function DELETE(request) {
       { status: 500 }
     );
   }
-}
-
-// --------------- helpers ---------------
-
-function generateBasicStats(responses) {
-  const totalQuestions = Object.keys(responses).length;
-  const answeredQuestions = Object.values(responses).filter(
-    (r) => r !== null && r !== ''
-  ).length;
-
-  const completionRate =
-    totalQuestions > 0
-      ? parseFloat(((answeredQuestions / totalQuestions) * 100).toFixed(2))
-      : 0;
-
-  const responseTypes = { text: 0, numeric: 0, choice: 0 };
-
-  Object.values(responses).forEach((response) => {
-    if (typeof response === 'number') {
-      responseTypes.numeric++;
-    } else if (typeof response === 'string') {
-      if (
-        ['yes', 'no', 'maybe', 'true', 'false'].includes(
-          response.toLowerCase()
-        )
-      ) {
-        responseTypes.choice++;
-      } else {
-        responseTypes.text++;
-      }
-    }
-  });
-
-  return { completionRate, totalQuestions, answeredQuestions, responseTypes };
 }

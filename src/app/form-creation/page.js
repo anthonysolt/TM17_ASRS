@@ -18,6 +18,16 @@ const QUESTION_TYPE_DEFS = [
   { type: 'url',        label: 'URL / Link',    icon: '🔗' },
 ];
 
+function attributeSupportsQuestion(attributeType, questionType, options = []) {
+  const effectiveQuestionType = questionType === 'checkbox' && options.length > 0 ? 'multiselect' : questionType;
+  const normalizedType = {
+    textarea: 'text', email: 'text', url: 'text', select: 'text',
+    multiselect: 'json', radio: 'text', choice: 'text', checkbox: 'boolean',
+    rating: 'number', yesno: 'boolean',
+  }[effectiveQuestionType] || effectiveQuestionType;
+  return attributeType === normalizedType;
+}
+
 // Pre-built required fields that are automatically included in every form.
 // These cannot be removed by the user.
 const REQUIRED_FIELDS = [
@@ -28,44 +38,7 @@ const REQUIRED_FIELDS = [
     field_type: 'text',
     scope: 'common',
     required: true,
-    help_text: '',
     validation_rules: { minLength: 2, maxLength: 100 },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-email',
-    field_key: 'email',
-    field_label: 'Email Address',
-    field_type: 'email',
-    scope: 'common',
-    required: true,
-    help_text: '',
-    validation_rules: { pattern: 'email' },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-phone',
-    field_key: 'phone_number',
-    field_label: 'Phone Number',
-    field_type: 'text',
-    scope: 'common',
-    required: true,
-    help_text: 'e.g. (555) 123-4567',
-    validation_rules: { pattern: 'phone' },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-school',
-    field_key: 'school',
-    field_label: 'School',
-    field_type: 'text',
-    scope: 'common',
-    required: true,
-    help_text: '',
-    validation_rules: { minLength: 2, maxLength: 150 },
     options: [],
     _locked: true,
   },
@@ -82,6 +55,8 @@ export default function FormCreationPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [questionTab, setQuestionTab] = useState('types');
+  const [initiativeAttributes, setInitiativeAttributes] = useState([]);
+  const [removingSavedQuestionId, setRemovingSavedQuestionId] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -97,27 +72,71 @@ export default function FormCreationPage() {
     }).catch(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!selectedInitiative) {
+      setInitiativeAttributes([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`/api/initiative-attributes?initiativeId=${selectedInitiative}`)
+      .then(response => response.ok ? response.json() : { attributes: [] })
+      .then(data => { if (!cancelled) setInitiativeAttributes(data.attributes || []); })
+      .catch(() => { if (!cancelled) setInitiativeAttributes([]); });
+    return () => { cancelled = true; };
+  }, [selectedInitiative]);
+
   const availableFields = [
-    ...fieldCatalog.common,
+    ...fieldCatalog.common.filter(f => f.is_reusable !== 0),
     ...fieldCatalog.initiative_specific.filter(f =>
-      !selectedInitiative || f.initiative_id === Number(selectedInitiative)
+      f.is_reusable !== 0 && (!selectedInitiative || f.initiative_id === Number(selectedInitiative))
     ),
   ];
 
   const addField = (field) => {
     if (selectedFields.some(sf => sf.field_id === field.field_id)) return;
-    const needsOptions = ['select', 'radio', 'checkbox'].includes(field.field_type);
+    const reusableFieldType = field.validation_rules?.ui_type
+      || ({ choice: 'radio', multiselect: 'checkbox', yesno: 'checkbox' }[field.field_type])
+      || field.field_type;
+    const needsOptions = ['select', 'radio', 'checkbox'].includes(reusableFieldType);
+    const savedOptions = Array.isArray(field.options)
+      ? field.options
+      : (field.field_options || []).map(option => option.option_value);
     setSelectedFields([...selectedFields, {
       field_id: field.field_id,
       field_key: field.field_key,
       field_label: field.field_label,
-      field_type: field.field_type,
+      field_type: reusableFieldType,
+      attribute_id: field.attribute_id || '',
       scope: field.scope,
       required: true,
-      help_text: '',
       validation_rules: null,
-      options: needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
+      options: needsOptions ? (savedOptions.length > 0 ? savedOptions : ['Option 1', 'Option 2']) : [],
     }]);
+  };
+
+  const removeSavedQuestion = async (field, event) => {
+    event.stopPropagation();
+    if (removingSavedQuestionId !== null) return;
+    setRemovingSavedQuestionId(field.field_id);
+    try {
+      const response = await apiFetch(`/api/admin/fields?fieldId=${field.field_id}`, {
+        method: 'PATCH',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Unable to remove saved question');
+      }
+      setFieldCatalog(current => ({
+        ...current,
+        common: current.common.filter(item => item.field_id !== field.field_id),
+        initiative_specific: current.initiative_specific.filter(item => item.field_id !== field.field_id),
+        staff_only: current.staff_only.filter(item => item.field_id !== field.field_id),
+      }));
+    } catch (error) {
+      alert(error.message || 'Unable to remove saved question');
+    } finally {
+      setRemovingSavedQuestionId(null);
+    }
   };
 
   const removeField = (fieldId) => {
@@ -174,8 +193,9 @@ export default function FormCreationPage() {
             question: f.field_label,
             type: f.field_type,
             required: f.required,
-            help_text: f.help_text || undefined,
+            save_for_reuse: f.save_for_reuse === true,
             scope: f.scope,
+            attribute_id: f.attribute_id || undefined,
             form_validation_rules: f.validation_rules || undefined,
             ...(f.options && f.options.length > 0 ? { options: f.options } : {}),
           };
@@ -279,9 +299,6 @@ export default function FormCreationPage() {
                       <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: '600' }}>required</span>
                     </div>
                     <div style={{ fontWeight: 600, fontSize: '13px', color: '#111827' }}>{sf.field_label}</div>
-                    {sf.help_text && (
-                      <div style={{ fontSize: '11px', color: '#6B7280', marginTop: '2px' }}>{sf.help_text}</div>
-                    )}
                   </div>
                   <div style={{ height: '28px', flex: '0 0 180px', border: '1px solid #E5E7EB', borderRadius: '6px', backgroundColor: '#F9FAFB' }} />
                 </div>
@@ -439,6 +456,24 @@ export default function FormCreationPage() {
 
                   {/* Config row */}
                   <div style={{ display: 'flex', gap: '12px', marginTop: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280' }}>
+                      Attribute
+                      <select
+                        value={sf.attribute_id || ''}
+                        onChange={e => updateFieldConfig(sf.field_id, 'attribute_id', e.target.value ? Number(e.target.value) : '')}
+                        aria-label={`Attribute for ${sf.field_label || 'question'}`}
+                        style={{ minWidth: '150px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #E5E7EB', fontSize: '12px', backgroundColor: '#fff' }}
+                      >
+                        <option value="">No attribute</option>
+                        {initiativeAttributes
+                          .filter(attribute => attributeSupportsQuestion(attribute.data_type, sf.field_type, sf.options))
+                          .map(attribute => (
+                            <option key={attribute.attribute_id} value={attribute.attribute_id}>
+                              {attribute.name} ({attribute.data_type})
+                            </option>
+                          ))}
+                      </select>
+                    </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: sf.required ? '#DC2626' : '#6B7280', cursor: sf._locked ? 'not-allowed' : 'pointer', fontWeight: sf.required ? 600 : 400 }}>
                       <input
                         type="checkbox"
@@ -449,12 +484,17 @@ export default function FormCreationPage() {
                       />
                       Required {sf._locked && '(locked)'}
                     </label>
-                    <input
-                      placeholder="Help text (optional)"
-                      value={sf.help_text}
-                      onChange={e => updateFieldConfig(sf.field_id, 'help_text', e.target.value)}
-                      style={{ flex: 1, minWidth: '140px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #E5E7EB', fontSize: '12px', color: '#374151', outline: 'none' }}
-                    />
+                    {typeof sf.field_id === 'string' && sf.field_id.startsWith('synthetic-') && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={sf.save_for_reuse === true}
+                          onChange={e => updateFieldConfig(sf.field_id, 'save_for_reuse', e.target.checked)}
+                          style={{ accentColor: '#E67E22' }}
+                        />
+                        Save question for reuse
+                      </label>
+                    )}
                   </div>
                 </div>
 
@@ -498,7 +538,10 @@ export default function FormCreationPage() {
               </label>
               <select
                 value={selectedInitiative}
-                onChange={e => setSelectedInitiative(e.target.value)}
+                onChange={e => {
+                  setSelectedInitiative(e.target.value);
+                  setSelectedFields(fields => fields.map(field => ({ ...field, attribute_id: '' })));
+                }}
                 required
                 style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E5E7EB', fontSize: '13px', color: '#111827', backgroundColor: 'white', outline: 'none' }}
               >
@@ -585,7 +628,7 @@ export default function FormCreationPage() {
                   cursor: 'pointer',
                   marginBottom: '-1px',
                 }}
-              >Question Types</button>
+              >Create Question</button>
               <button
                 type="button"
                 onClick={() => setQuestionTab('saved')}
@@ -603,7 +646,7 @@ export default function FormCreationPage() {
               >Saved Questions</button>
             </div>
 
-            {/* Question Types tab */}
+            {/* Create Question tab */}
             {questionTab === 'types' && (
               <>
                 <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '0 0 12px' }}>
@@ -615,24 +658,20 @@ export default function FormCreationPage() {
                       key={t.type}
                       type="button"
                       onClick={() => {
-                        const catalogField = availableFields.find(f => f.field_type === t.type);
-                        if (catalogField) {
-                          addField(catalogField);
-                        } else {
-                          const syntheticId = `synthetic-${t.type}-${Date.now()}`;
-                          const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type);
-                          setSelectedFields(prev => [...prev, {
-                            field_id: syntheticId,
-                            field_key: t.type,
-                            field_label: t.label,
-                            field_type: t.type,
-                            scope: 'common',
-                            required: true,
-                            help_text: '',
-                            validation_rules: null,
-                            options: needsOptions ? ['Option 1', 'Option 2'] : [],
-                          }]);
-                        }
+                        const syntheticId = `synthetic-${t.type}-${Date.now()}`;
+                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type);
+                        setSelectedFields(prev => [...prev, {
+                          field_id: syntheticId,
+                          field_key: t.type,
+                          field_label: t.label,
+                          field_type: t.type,
+                          attribute_id: '',
+                          scope: 'common',
+                          required: true,
+                          save_for_reuse: false,
+                          validation_rules: null,
+                          options: needsOptions ? ['Option 1', 'Option 2'] : [],
+                        }]);
                       }}
                       style={{
                         padding: '10px 8px',
@@ -672,29 +711,45 @@ export default function FormCreationPage() {
                       {availableFields.map(f => {
                         const isAdded = selectedFields.some(sf => sf.field_id === f.field_id);
                         return (
-                          <button
+                          <div
                             key={f.field_id}
-                            type="button"
-                            onClick={() => addField(f)}
-                            disabled={isAdded}
                             style={{
-                              padding: '6px 12px',
+                              padding: '0 5px 0 12px',
                               borderRadius: '9999px',
-                              fontSize: '12px',
-                              cursor: isAdded ? 'default' : 'pointer',
                               border: `1px solid ${isAdded ? '#E5E7EB' : f.scope === 'common' ? '#BFDBFE' : '#FED7AA'}`,
                               backgroundColor: isAdded ? '#F3F4F6' : f.scope === 'common' ? '#EFF6FF' : '#FFF7ED',
                               color: isAdded ? '#9CA3AF' : f.scope === 'common' ? '#2563EB' : '#E67E22',
-                              opacity: isAdded ? 0.6 : 1,
-                              fontWeight: '500',
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '4px',
+                              gap: '2px',
                             }}
                           >
-                            {isAdded && <span>&#10003;</span>}
-                            {f.field_label}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => addField(f)}
+                              disabled={isAdded}
+                              style={{
+                                padding: '6px 4px 6px 0', border: 'none', background: 'transparent',
+                                color: 'inherit', fontSize: '12px', cursor: isAdded ? 'default' : 'pointer',
+                                opacity: isAdded ? 0.6 : 1, fontWeight: 500,
+                              }}
+                            >
+                              {isAdded && <span style={{ marginRight: '4px' }}>&#10003;</span>}
+                              {f.field_label}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Remove ${f.field_label} from saved questions`}
+                              title="Remove from saved questions"
+                              disabled={removingSavedQuestionId !== null}
+                              onClick={(event) => removeSavedQuestion(f, event)}
+                              style={{
+                                width: '20px', height: '20px', padding: 0, border: 'none', borderRadius: '50%',
+                                background: 'transparent', color: '#9CA3AF', cursor: 'pointer', fontSize: '15px',
+                                lineHeight: 1, opacity: removingSavedQuestionId === f.field_id ? 0.4 : 1,
+                              }}
+                            >×</button>
+                          </div>
                         );
                       })}
                     </div>

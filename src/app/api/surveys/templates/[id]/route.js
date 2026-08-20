@@ -33,6 +33,7 @@
 import db from '@/lib/db.js';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { logAudit } from '@/lib/audit';
+import { deleteSurveyTemplateData } from '@/lib/delete-survey-template';
 
 function resolveRules(fieldRulesJson, formFieldRulesJson) {
   const base = fieldRulesJson ? JSON.parse(fieldRulesJson) : null;
@@ -82,11 +83,13 @@ export async function GET(request, context) {
 
     // Get questions
     const getQuestions = db.prepare(`
-      SELECT ff.form_field_id, f.field_id, f.field_label, f.field_type,
+      SELECT ff.form_field_id, f.field_id, f.attribute_id, ia.name AS attribute_name,
+             ia.data_type AS attribute_data_type, f.field_label, f.field_type,
              ff.required, ff.help_text, f.scope, f.initiative_id,
              f.validation_rules AS field_rules, ff.validation_rules AS form_field_rules
       FROM form_field ff
       JOIN field f ON ff.field_id = f.field_id
+      LEFT JOIN initiative_attribute ia ON ia.attribute_id = f.attribute_id
       WHERE ff.form_id = ?
       ORDER BY ff.display_order
     `);
@@ -94,8 +97,10 @@ export async function GET(request, context) {
       SELECT option_value, display_label FROM field_options WHERE field_id = ? ORDER BY display_order`);
 
     const questions = getQuestions.all(form.id).map(q => {
-      const isOptionType = q.field_type === 'select' || q.field_type === 'multiselect' || q.field_type === 'choice';
-      const isYesNo = q.field_type === 'yesno';
+      const rules = resolveRules(q.field_rules, q.form_field_rules);
+      const displayType = (rules && rules.ui_type) || q.field_type;
+      const isOptionType = ['select', 'radio', 'checkbox', 'multiselect', 'choice'].includes(displayType);
+      const isYesNo = displayType === 'yesno';
       const rawOptions = (isOptionType || isYesNo)
         ? getOptions.all(q.field_id).map(opt => opt.option_value)
         : undefined;
@@ -103,11 +108,14 @@ export async function GET(request, context) {
         id: q.field_id,
         text: {
           question: q.field_label,
-          type: q.field_type,
+          type: displayType,
           required: !!q.required,
           scope: q.scope,
           initiative_id: q.initiative_id,
-          validation_rules: resolveRules(q.field_rules, q.form_field_rules),
+          attribute_id: q.attribute_id,
+          attribute_name: q.attribute_name,
+          attribute_data_type: q.attribute_data_type,
+          validation_rules: rules,
           ...(isOptionType && rawOptions ? { options: rawOptions } : {}),
           ...(isYesNo && rawOptions ? { subQuestions: rawOptions } : {}),
           ...(q.help_text ? { help_text: q.help_text } : {})
@@ -167,6 +175,46 @@ export async function PUT(request, context) {
 
     const body = await request.json();
     const now = new Date().toISOString();
+    let normalizedQuestions = null;
+
+    if (body.questions !== undefined) {
+      if (!Array.isArray(body.questions)) {
+        return Response.json({ error: 'questions must be an array' }, { status: 400 });
+      }
+
+      const existingQuestions = db.prepare(`
+        SELECT f.field_id, f.field_type, f.validation_rules, ff.form_field_id
+        FROM form_field ff
+        JOIN field f ON f.field_id = ff.field_id
+        WHERE ff.form_id = ?
+      `).all(templateId);
+      const questionsById = new Map(existingQuestions.map(question => [Number(question.field_id), question]));
+      const seen = new Set();
+      normalizedQuestions = [];
+
+      for (const question of body.questions) {
+        const fieldId = Number(question?.id);
+        const existingQuestion = questionsById.get(fieldId);
+        if (!existingQuestion || seen.has(fieldId)) {
+          return Response.json({ error: 'Each question must belong to this survey and may only appear once' }, { status: 400 });
+        }
+        seen.add(fieldId);
+        const label = String(question.question || '').trim();
+        if (!label) {
+          return Response.json({ error: 'Question text cannot be empty' }, { status: 400 });
+        }
+        const rules = resolveRules(existingQuestion.validation_rules, null);
+        const displayType = rules?.ui_type || existingQuestion.field_type;
+        const acceptsOptions = ['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(displayType);
+        const options = acceptsOptions
+          ? (Array.isArray(question.options) ? question.options.map(option => String(option).trim()).filter(Boolean) : [])
+          : [];
+        if (acceptsOptions && options.length === 0) {
+          return Response.json({ error: `Question "${label}" requires at least one answer choice` }, { status: 400 });
+        }
+        normalizedQuestions.push({ fieldId, label, required: question.required !== false, acceptsOptions, options });
+      }
+    }
 
     // Update basic fields
     if (body.title !== undefined) {
@@ -184,12 +232,39 @@ export async function PUT(request, context) {
       db.prepare('UPDATE form SET is_published = ?, updated_at = ? WHERE form_id = ?').run(isPublished, now, templateId);
     }
 
+    if (normalizedQuestions) {
+      const updateQuestions = db.transaction(() => {
+        const updateField = db.prepare('UPDATE field SET field_label = ? WHERE field_id = ?');
+        const updateFormField = db.prepare(
+          'UPDATE form_field SET required = ? WHERE form_id = ? AND field_id = ?'
+        );
+        const deleteOptions = db.prepare('DELETE FROM field_options WHERE field_id = ?');
+        const insertOption = db.prepare(`
+          INSERT INTO field_options (field_id, option_value, display_label, display_order)
+          VALUES (?, ?, ?, ?)
+        `);
+
+        normalizedQuestions.forEach(question => {
+          updateField.run(question.label, question.fieldId);
+          updateFormField.run(question.required ? 1 : 0, templateId, question.fieldId);
+          if (question.acceptsOptions) {
+            deleteOptions.run(question.fieldId);
+            question.options.forEach((option, index) => {
+              insertOption.run(question.fieldId, option, option, index);
+            });
+          }
+        });
+        db.prepare('UPDATE form SET updated_at = ? WHERE form_id = ?').run(now, templateId);
+      });
+      updateQuestions();
+    }
+
     logAudit(db, {
       event: 'survey.updated',
       userEmail: auth.user.email,
       targetType: 'survey',
       targetId: String(templateId),
-      payload: { title: body.title, status: body.status },
+      payload: { title: body.title, status: body.status, questionsUpdated: normalizedQuestions?.length || 0 },
     });
 
     const updated = db.prepare('SELECT form_id AS id, form_name AS title, description, is_published AS published, updated_at FROM form WHERE form_id = ?').get(templateId);
@@ -218,32 +293,7 @@ export async function DELETE(request, context) {
     // Get template name before deleting for audit log
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
-    const deleteTx = db.transaction((id) => {
-      const affectedSurveyIds = db.prepare('SELECT id, responses FROM surveys').all()
-        .filter((survey) => {
-          try {
-            return Number(JSON.parse(survey.responses)?.templateId) === id;
-          } catch {
-            return false;
-          }
-        })
-        .map((survey) => survey.id);
-
-      if (affectedSurveyIds.length) {
-        const deleteReport = db.prepare('DELETE FROM reports WHERE survey_id = ?');
-        affectedSurveyIds.forEach((sid) => deleteReport.run(sid));
-      }
-
-      if (affectedSurveyIds.length) {
-        const deleteSurvey = db.prepare('DELETE FROM surveys WHERE id = ?');
-        affectedSurveyIds.forEach((surveyId) => deleteSurvey.run(surveyId));
-      }
-      db.prepare('DELETE FROM submission WHERE form_id = ?').run(id);
-      db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
-      db.prepare('DELETE FROM form WHERE form_id = ?').run(id);
-    });
-
-    deleteTx(templateId);
+    const deleted = deleteSurveyTemplateData(db, templateId);
 
     logAudit(db, {
       event: 'survey.deleted',
@@ -254,7 +304,7 @@ export async function DELETE(request, context) {
     });
 
     return new Response(
-      JSON.stringify({ success: true, templateId }),
+      JSON.stringify({ success: true, templateId, deleted }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (err) {

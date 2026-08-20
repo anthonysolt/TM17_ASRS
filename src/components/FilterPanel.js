@@ -19,6 +19,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { findReportColumn } from '@/lib/report-table-filters';
 
 // Maximum number of filters allowed at once (per REP001/REP020)
 const MAX_FILTERS = 7;
@@ -32,10 +33,9 @@ export default function FilterPanel({ attributes, activeFilters, onFiltersChange
   const attributeOptions = useMemo(() => {
     const options = {};
     attributes.forEach(attr => {
-      const key = attr.charAt(0).toLowerCase() + attr.slice(1).replace(/\s/g, '');
       const uniqueValues = [...new Set(
         tableData.map(row => {
-          const rowKey = Object.keys(row).find(k => k.toLowerCase() === key.toLowerCase());
+          const rowKey = findReportColumn(row, attr);
           return rowKey ? String(row[rowKey]) : null;
         }).filter(Boolean)
       )];

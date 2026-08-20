@@ -25,6 +25,12 @@ SELECT setval(
   true
 );
 
+INSERT INTO initiative_attribute (name, data_type, initiative_id)
+SELECT attribute_name, 'text', i.initiative_id
+FROM initiative i
+CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(NULLIF(i.attributes, ''), '[]')::jsonb) AS attribute_name
+ON CONFLICT (initiative_id, name) DO NOTHING;
+
 INSERT INTO user_type (type, access_rank) VALUES
   ('public', 10),
   ('staff', 50),

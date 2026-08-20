@@ -75,6 +75,40 @@ export function validateReportCreatePayload(body) {
   if (!Array.isArray(sorts)) {
     return { valid: false, error: 'sorts must be an array' };
   }
+
+  let analysisSelections;
+  if (body.analysisSelections !== undefined) {
+    if (!isPlainObject(body.analysisSelections)) {
+      return { valid: false, error: 'analysisSelections must be an object' };
+    }
+    analysisSelections = { attributes: [], questions: [] };
+    for (const kind of ['attributes', 'questions']) {
+      const entries = body.analysisSelections[kind] ?? [];
+      if (!Array.isArray(entries)) {
+        return { valid: false, error: `analysisSelections.${kind} must be an array` };
+      }
+      const seen = new Set();
+      for (const entry of entries) {
+        if (!isPlainObject(entry)) return { valid: false, error: `each selected ${kind.slice(0, -1)} must be an object` };
+        const id = asFiniteNumber(entry.id);
+        if (id === null || id <= 0) return { valid: false, error: `each selected ${kind.slice(0, -1)} requires a positive id` };
+        if (seen.has(id)) return { valid: false, error: `duplicate selected ${kind.slice(0, -1)} id: ${id}` };
+        seen.add(id);
+        const method = entry.method || 'delta_halves';
+        if (!['delta_halves', 'linear_slope'].includes(method)) {
+          return { valid: false, error: `Invalid analysis method for ${kind.slice(0, -1)} ${id}` };
+        }
+        const thresholdPct = entry.thresholdPct === undefined ? 2 : asFiniteNumber(entry.thresholdPct);
+        if (thresholdPct === null || thresholdPct < 0 || thresholdPct > 100) {
+          return { valid: false, error: `thresholdPct for ${kind.slice(0, -1)} ${id} must be between 0 and 100` };
+        }
+        analysisSelections[kind].push({ id, method, thresholdPct });
+      }
+    }
+    if (analysisSelections.attributes.length + analysisSelections.questions.length === 0) {
+      return { valid: false, error: 'Select at least one attribute or question to analyze' };
+    }
+  }
   for (const sort of sorts) {
     if (!isPlainObject(sort)) {
       return { valid: false, error: 'each sort must be an object' };
@@ -98,6 +132,7 @@ export function validateReportCreatePayload(body) {
       expressions,
       sorts,
       trendConfig: body.trendConfig,
+      analysisSelections,
       includeAiInsights: body.includeAiInsights === true,
       clientMeta: isPlainObject(body.clientMeta) ? body.clientMeta : {},
     },

@@ -32,6 +32,14 @@ describe('validateFieldValue — text', () => {
 });
 
 describe('validateFieldValue — number', () => {
+  it('accepts numeric strings from browser number inputs', () => {
+    expect(validateFieldValue('42.5', numberField, null)).toBeNull();
+  });
+
+  it('rejects non-numeric strings', () => {
+    expect(validateFieldValue('not-a-number', numberField, null)).toMatch(/valid number/);
+  });
+
   it('returns error mentioning "at least N" when number is below min', () => {
     const result = validateFieldValue(3, numberField, { min: 5 });
     expect(result).toMatch(/at least 5/);

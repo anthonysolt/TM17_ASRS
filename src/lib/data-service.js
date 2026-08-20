@@ -23,9 +23,16 @@ export async function getInitiatives() {
  * Returns the full report data for one specific initiative.
  * This includes: summary stats, chart data, and table data.
  */
-export async function getReportData(initiativeId) {
-  const response = await fetch(`/api/initiatives/${initiativeId}/report-data`);
+export async function getReportData(initiativeId, fieldIds = []) {
+  const query = fieldIds.length > 0 ? `?fieldIds=${fieldIds.join(',')}` : '';
+  const response = await fetch(`/api/initiatives/${initiativeId}/report-data${query}`);
   if (!response.ok) return null;
+  return response.json();
+}
+
+export async function getReportOptions(initiativeId) {
+  const response = await fetch(`/api/initiatives/${initiativeId}/report-options`);
+  if (!response.ok) throw new Error('Unable to load report questions and attributes.');
   return response.json();
 }
 

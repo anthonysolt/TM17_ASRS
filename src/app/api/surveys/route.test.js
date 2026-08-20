@@ -4,16 +4,10 @@ const dbProxy = vi.hoisted(() => ({
   transaction: (...args) => state.db.transaction(...args),
   exec: (...args) => state.db.exec(...args),
 }));
-const generateAIReportMock = vi.hoisted(() => vi.fn());
-
 vi.mock('@/lib/db', () => ({
   default: dbProxy,
   db: dbProxy,
   initializeDatabase: vi.fn(),
-}));
-
-vi.mock('@/lib/openai', () => ({
-  generateAIReport: (...args) => generateAIReportMock(...args),
 }));
 
 import { GET, POST, DELETE } from '@/app/api/surveys/route';
@@ -29,8 +23,6 @@ describe('/api/surveys integration', () => {
 
   beforeEach(() => {
     state.db = createTestDb();
-    generateAIReportMock.mockReset();
-    generateAIReportMock.mockResolvedValue({ summary: 'ok', insights: ['one'] });
   });
 
   afterEach(() => {
@@ -50,7 +42,7 @@ describe('/api/surveys integration', () => {
     expect(res.status).toBe(400);
   });
 
-  test('POST persists survey and report', async () => {
+  test('POST persists a survey without generating a report', async () => {
     const req = new Request('http://localhost:3000/api/surveys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -66,22 +58,85 @@ describe('/api/surveys integration', () => {
 
     expect(res.status).toBe(200);
     expect(payload.success).toBe(true);
-    expect(payload.report.summary).toBe('ok');
+    expect(payload).not.toHaveProperty('report');
 
     const surveyCount = state.db.prepare('SELECT COUNT(*) AS c FROM surveys').get().c;
     const reportCount = state.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE survey_id IS NOT NULL').get().c;
     expect(surveyCount).toBe(1);
-    expect(reportCount).toBe(1);
+    expect(reportCount).toBe(0);
     expect(payload.submittedAt).toBeTruthy();
     expect(payload.survey).toMatchObject({ name: 'Alex', email: 'a@example.com' });
   });
 
-  test('DELETE removes survey and related reports', async () => {
+  test('POST stores browser number-input strings in value_number', async () => {
+    const initiativeId = Number(state.db.prepare(`
+      INSERT INTO initiative (initiative_name, attributes, questions, settings)
+      VALUES (?, '[]', '[]', '{}')
+    `).run('Numeric Answers').lastInsertRowid);
+    const formId = Number(state.db.prepare(`
+      INSERT INTO form (initiative_id, form_name, is_published) VALUES (?, ?, 1)
+    `).run(initiativeId, 'Numeric Survey').lastInsertRowid);
+    const fieldId = Number(state.db.prepare(`
+      INSERT INTO field (field_key, field_label, field_type, scope) VALUES (?, ?, 'number', 'common')
+    `).run('participant_count', 'How many participants?').lastInsertRowid);
+    state.db.prepare(`
+      INSERT INTO form_field (form_id, field_id, display_order, required) VALUES (?, ?, 0, 1)
+    `).run(formId, fieldId);
+
+    const res = await POST(new Request('http://localhost:3000/api/surveys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Taylor',
+        email: 'taylor@example.com',
+        templateId: formId,
+        responses: { templateId: formId, templateAnswers: { [fieldId]: '42.5' } },
+      }),
+    }));
+
+    expect(res.status).toBe(200);
+    const stored = state.db.prepare(`
+      SELECT value_text, value_number FROM submission_value WHERE field_id = ?
+    `).get(fieldId);
+    expect(stored).toEqual({ value_text: null, value_number: 42.5 });
+  });
+
+  test('DELETE removes the complete survey submission footprint', async () => {
+    const initiativeId = Number(state.db.prepare(`
+      INSERT INTO initiative (initiative_name, attributes, questions, settings)
+      VALUES (?, '[]', '[]', '{}')
+    `).run('Delete Survey Initiative').lastInsertRowid);
+    const formId = Number(state.db.prepare('INSERT INTO form (initiative_id, form_name) VALUES (?, ?)')
+      .run(initiativeId, 'Delete Survey Form').lastInsertRowid);
+    const fieldId = Number(state.db.prepare(`
+      INSERT INTO field (field_key, field_label, field_type, scope) VALUES (?, ?, 'number', 'common')
+    `).run('delete_count', 'Count').lastInsertRowid);
+    state.db.prepare('INSERT INTO form_field (form_id, field_id, display_order) VALUES (?, ?, 0)').run(formId, fieldId);
     const surveyId = Number(state.db.prepare(
       'INSERT INTO surveys (name, email, responses, submitted_at) VALUES (?, ?, ?, ?)' 
-    ).run('DeleteMe', 'del@example.com', JSON.stringify({ q: 'x' }), '2026-03-24T00:00:00.000Z').lastInsertRowid);
+    ).run('DeleteMe', 'del@example.com', JSON.stringify({ templateId: formId, q: 'x' }), '2026-03-24T00:00:00.000Z').lastInsertRowid);
 
-    state.db.prepare('INSERT INTO reports (survey_id, report_data, created_at) VALUES (?, ?, ?)').run(surveyId, JSON.stringify({ summary: 'd' }), '2026-03-24T00:00:00.000Z');
+    const reportId = Number(state.db.prepare('INSERT INTO reports (survey_id, report_data, created_at) VALUES (?, ?, ?)')
+      .run(surveyId, JSON.stringify({ summary: 'd' }), '2026-03-24T00:00:00.000Z').lastInsertRowid);
+    state.db.prepare('INSERT INTO report_generation_log (report_id) VALUES (?)').run(reportId);
+    const submissionId = Number(state.db.prepare(`
+      INSERT INTO submission (initiative_id, form_id) VALUES (?, ?)
+    `).run(initiativeId, formId).lastInsertRowid);
+    state.db.prepare('INSERT INTO submission_value (submission_id, field_id, value_number) VALUES (?, ?, ?)')
+      .run(submissionId, fieldId, 7);
+    const secondSubmissionId = Number(state.db.prepare(`
+      INSERT INTO submission (initiative_id, form_id) VALUES (?, ?)
+    `).run(initiativeId, formId).lastInsertRowid);
+    state.db.prepare('INSERT INTO submission_value (submission_id, field_id, value_number) VALUES (?, ?, ?)')
+      .run(secondSubmissionId, fieldId, 9);
+    const qrCodeId = Number(state.db.prepare(`
+      INSERT INTO qr_codes (qr_code_key, qr_type, target_id, target_url) VALUES (?, 'survey', ?, ?)
+    `).run('delete-survey-qr', surveyId, '/survey').lastInsertRowid);
+    state.db.prepare('INSERT INTO qr_scans (qr_code_id) VALUES (?)').run(qrCodeId);
+    state.db.prepare(`
+      INSERT INTO survey_distribution (survey_template_id, start_date, end_date, response_count)
+      VALUES (?, '2026-03-01', '2026-03-31', 1)
+    `).run(String(formId));
 
     const tokens = createSessionForRank(state.db, { rank: 100, verified: 1 });
     const res = await DELETE(new Request(`http://localhost:3000/api/surveys?surveyId=${surveyId}`, {
@@ -99,6 +154,13 @@ describe('/api/surveys integration', () => {
 
     expect(remainingSurveyCount).toBe(0);
     expect(remainingReportCount).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM submission WHERE form_id = ?').get(formId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM submission_value WHERE submission_id = ?').get(submissionId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM submission_value WHERE submission_id = ?').get(secondSubmissionId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM report_generation_log WHERE report_id = ?').get(reportId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM qr_codes WHERE qr_code_id = ?').get(qrCodeId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM qr_scans WHERE qr_code_id = ?').get(qrCodeId).c).toBe(0);
+    expect(state.db.prepare('SELECT response_count FROM survey_distribution').get().response_count).toBe(0);
   });
 
   test('GET requires auth outside test env', async () => {

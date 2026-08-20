@@ -2,8 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import DataTable from '@/components/DataTable';
-import { computeTrendData, processReportData, validateTrendConfig } from '@/lib/report-engine';
-import { derivePreviewAttributes } from '@/lib/report-preview';
+import { computeTrendData, processReportData } from '@/lib/report-engine';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell,
@@ -11,23 +10,50 @@ import {
 
 const COLORS = ['#C0392B', '#E67E22', '#F39C12', '#27AE60', '#2980B9'];
 
-export default function StepPreview({ reportConfig, tableData, onGenerate, isSubmitting }) {
-  const selectedAttributes = reportConfig.selectedInitiative?.attributes;
+export default function StepPreview({ reportConfig, reportOptions, tableData, onGenerate, isSubmitting }) {
   const selectedInitiativeId = reportConfig.selectedInitiative?.id;
-  const rawTrendConfig = reportConfig.trendConfig;
   const reportName = reportConfig.reportName;
+  const analysisSelections = useMemo(
+    () => reportConfig.analysisSelections || { attributes: [], questions: [] },
+    [reportConfig.analysisSelections]
+  );
 
   const [viewMode, setViewMode] = useState('table');
-  const previewAttributes = useMemo(
-    () => derivePreviewAttributes(selectedAttributes || [], tableData || []),
-    [selectedAttributes, tableData]
-  );
+  const previewAttributes = useMemo(() => tableData?.[0]
+    ? Object.keys(tableData[0]).filter((key) => key !== 'id')
+    : [], [tableData]);
+
+  const analysisGroups = useMemo(() => {
+    const keys = tableData?.[0] ? Object.keys(tableData[0]) : [];
+    const columnFor = (question) => keys.find((key) => key === question.label)
+      || keys.find((key) => key === `${question.label} (${question.id})`)
+      || null;
+    const attributesById = new Map(reportOptions.attributes.map((attribute) => [Number(attribute.id), attribute]));
+    const questionsById = new Map(reportOptions.questions.map((question) => [Number(question.id), question]));
+    return [
+      ...(analysisSelections.attributes || []).map((selection) => ({
+        ...selection,
+        type: 'Attribute',
+        label: attributesById.get(Number(selection.id))?.name || `Attribute ${selection.id}`,
+        variables: reportOptions.questions
+          .filter((question) => Number(question.attributeId) === Number(selection.id))
+          .map(columnFor).filter(Boolean),
+      })),
+      ...(analysisSelections.questions || []).map((selection) => {
+        const question = questionsById.get(Number(selection.id));
+        return {
+          ...selection,
+          type: 'Question',
+          label: question?.label || `Question ${selection.id}`,
+          variables: question ? [columnFor(question)].filter(Boolean) : [],
+        };
+      }),
+    ];
+  }, [analysisSelections, reportOptions, tableData]);
 
   // Run the full pipeline client-side for preview
   const { filteredData, metrics, trendData, explainability } = useMemo(() => {
     const attributes = previewAttributes;
-    const trendConfig = rawTrendConfig || { variables: [], enabledCalc: true, enabledDisplay: true };
-
     if (!tableData || tableData.length === 0) {
       return {
         filteredData: [],
@@ -49,17 +75,22 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
       reportConfig.sorts || [],
       attributes
     );
-    const trendValidation = validateTrendConfig(trendConfig, attributes);
     return {
       ...processed,
-      trendData: trendValidation.valid
-        ? computeTrendData(processed.filteredData, trendValidation.normalized, {
+      trendData: analysisGroups.flatMap((group) => group.variables.length > 0
+        ? computeTrendData(processed.filteredData, {
+          variables: group.variables,
+          method: group.method,
+          thresholdPct: group.thresholdPct,
+          enabledCalc: true,
+          enabledDisplay: true,
+        }, {
           initiativeId: selectedInitiativeId,
-          reportName,
-        })
-        : [],
+          reportName: `${reportName}:${group.type}:${group.id}`,
+        }).map((trend) => ({ ...trend, selectionLabel: group.label, selectionType: group.type.toLowerCase() }))
+        : []),
     };
-  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, rawTrendConfig, selectedInitiativeId, reportName]);
+  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, analysisGroups, selectedInitiativeId, reportName]);
 
   // Build human-readable config summary
   const activeFilterEntries = Object.entries(reportConfig.filters || {}).filter(([, v]) => v && v !== 'All');
@@ -99,7 +130,7 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
   return (
     <div>
       <h2 style={{ fontSize: '1.15rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-        Step 6: Preview & Generate
+        Step 3: Preview & Generate
       </h2>
       <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
         Review your configuration and preview the results before generating the report.
@@ -159,6 +190,16 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
               <p style={{ margin: '0.15rem 0 0 0' }}>
                 {reportConfig.sorts.map((s, i) => `${i + 1}. ${s.attribute} (${s.direction === 'desc' ? 'Z→A' : 'A→Z'})`).join(', ')}
               </p>
+            </div>
+          )}
+          {analysisGroups.length > 0 && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Analysis</span>
+              {analysisGroups.map((group) => (
+                <p key={`${group.type}-${group.id}`} style={{ margin: '0.2rem 0 0' }}>
+                  <strong>{group.type}:</strong> {group.label} — {group.method === 'linear_slope' ? 'Linear Slope' : 'Half-to-Half Delta'}
+                </p>
+              ))}
             </div>
           )}
         </div>

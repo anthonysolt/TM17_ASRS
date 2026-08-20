@@ -26,6 +26,15 @@ const TABLE_SCHEMAS = {
     uniqueKey: 'category_name',
     autoId: 'category_id',
   },
+  initiative_attribute: {
+    label: 'Initiative Attributes',
+    columns: {
+      name: { type: 'text', required: true },
+      data_type: { type: 'enum', required: true, values: ['text', 'number', 'date', 'boolean', 'json'] },
+      initiative_id: { type: 'fk', required: true, references: 'initiative' },
+    },
+    autoId: 'attribute_id',
+  },
   field: {
     label: 'Fields',
     columns: {
@@ -42,6 +51,7 @@ const TABLE_SCHEMAS = {
         default: 'common',
       },
       initiative_id: { type: 'fk', references: 'initiative' },
+      attribute_id: { type: 'fk', references: 'initiative_attribute' },
       is_filterable: { type: 'boolean', default: 0 },
       is_required_default: { type: 'boolean', default: 0 },
     },

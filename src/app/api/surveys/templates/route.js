@@ -1,13 +1,17 @@
 import db from '../../../../lib/db.js';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { logAudit } from '@/lib/audit';
+import { attributeTypeAcceptsField } from '@/lib/initiative-attributes';
+import { deleteSurveyTemplateData } from '@/lib/delete-survey-template';
 
 // Map UI-only field types to valid DB types.
 // DB CHECK constraint: field_type IN ('text','number','date','boolean','select','multiselect','rating','json','choice','yesno')
 const UI_TO_DB_TYPE = {
   textarea: 'text',
+  select: 'text',
   checkbox: 'boolean',
-  radio: 'choice',
+  radio: 'text',
+  choice: 'text',
   email: 'text',
   url: 'text',
 };
@@ -30,11 +34,13 @@ export async function GET() {
 
   // For each form, get questions
   const getQuestions = db.prepare(`
-    SELECT ff.form_field_id, f.field_id, f.field_label, f.field_type,
+    SELECT ff.form_field_id, f.field_id, f.attribute_id, ia.name AS attribute_name,
+           ia.data_type AS attribute_data_type, f.field_label, f.field_type,
            ff.required, ff.help_text, f.scope, f.initiative_id,
            f.validation_rules AS field_rules, ff.validation_rules AS form_field_rules
     FROM form_field ff
     JOIN field f ON ff.field_id = f.field_id
+    LEFT JOIN initiative_attribute ia ON ia.attribute_id = f.attribute_id
     WHERE ff.form_id = ?
     ORDER BY ff.display_order
   `);
@@ -43,14 +49,13 @@ export async function GET() {
 
   const surveys = forms.map(form => {
     const questions = getQuestions.all(form.id).map(q => {
-      const isOptionType = q.field_type === 'select' || q.field_type === 'multiselect' || q.field_type === 'choice';
-      const isYesNo = q.field_type === 'yesno';
+      const rules = resolveRules(q.field_rules, q.form_field_rules);
+      const displayType = (rules && rules.ui_type) || q.field_type;
+      const isOptionType = ['select', 'radio', 'checkbox', 'multiselect', 'choice'].includes(displayType);
+      const isYesNo = displayType === 'yesno';
       const rawOptions = (isOptionType || isYesNo)
         ? getOptions.all(q.field_id).map(opt => opt.option_value)
         : undefined;
-      const rules = resolveRules(q.field_rules, q.form_field_rules);
-      // Prefer ui_type from validation_rules (original UI type), fall back to DB field_type
-      const displayType = (rules && rules.ui_type) || q.field_type;
       return {
         id: q.field_id,
         text: {
@@ -59,6 +64,9 @@ export async function GET() {
           required: !!q.required,
           scope: q.scope,
           initiative_id: q.initiative_id,
+          attribute_id: q.attribute_id,
+          attribute_name: q.attribute_name,
+          attribute_data_type: q.attribute_data_type,
           validation_rules: rules,
           ...(isOptionType && rawOptions ? { options: rawOptions } : {}),
           ...(isYesNo && rawOptions ? { subQuestions: rawOptions } : {}),
@@ -91,6 +99,27 @@ export async function POST(request) {
       return new Response(JSON.stringify({ error: "Invalid payload" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
 
+    const initiativeAttributes = db.prepare(`
+      SELECT attribute_id, name, data_type FROM initiative_attribute WHERE initiative_id = ?
+    `).all(effectiveInitiativeId);
+    const attributesById = new Map(initiativeAttributes.map(attribute => [Number(attribute.attribute_id), attribute]));
+    for (const question of questions) {
+      const textObj = typeof question === 'object' && question.text ? question.text : question;
+      if (textObj.attribute_id == null || textObj.attribute_id === '') continue;
+      const attribute = attributesById.get(Number(textObj.attribute_id));
+      if (!attribute) {
+        return Response.json({ error: 'Each selected attribute must belong to the survey initiative' }, { status: 400 });
+      }
+      const questionType = textObj.type === 'checkbox' && Array.isArray(textObj.options) && textObj.options.length > 0
+        ? 'multiselect'
+        : (textObj.type || 'text');
+      if (!attributeTypeAcceptsField(attribute.data_type, questionType)) {
+        return Response.json({
+          error: `Attribute "${attribute.name}" (${attribute.data_type}) is incompatible with question type "${textObj.type || 'text'}"`,
+        }, { status: 400 });
+      }
+    }
+
     // Prepare all statements
     const now = new Date().toISOString();
     const insertForm = db.prepare(`
@@ -98,8 +127,8 @@ export async function POST(request) {
       VALUES (?, ?, ?, ?, ?, NULL, 1)
     `);
     const insertField = db.prepare(`
-      INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable, is_required_default, validation_rules)
-      VALUES (?, ?, ?, ?, ?, 0, 0, ?)
+      INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, attribute_id, is_filterable, is_required_default, is_reusable, validation_rules)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
     `);
     const insertFormField = db.prepare(`
       INSERT INTO form_field (form_id, field_id, display_order, required, is_hidden, help_text, validation_rules)
@@ -133,9 +162,10 @@ export async function POST(request) {
           dbFieldType = UI_TO_DB_TYPE[uiFieldType] || uiFieldType;
         }
         const required = textObj.required ? 1 : 0;
-        const helpText = textObj.help_text || null;
+        const helpText = null;
         const scope = textObj.scope || 'common';
         const fieldInitiativeId = scope === 'initiative_specific' ? effectiveInitiativeId : null;
+        const attributeId = textObj.attribute_id ? Number(textObj.attribute_id) : null;
 
         // Merge ui_type into validation_rules so the renderer knows the original display type
         const baseRules = textObj.validation_rules || {};
@@ -148,16 +178,27 @@ export async function POST(request) {
         let fieldId;
         // Only look up existing fields by numeric ID; synthetic IDs (strings) are always new
         if (textObj.field_id && typeof textObj.field_id === 'number') {
-          const existingField = db.prepare('SELECT field_id FROM field WHERE field_id = ?').get(textObj.field_id);
-          if (existingField) fieldId = existingField.field_id;
+          const existingField = db.prepare('SELECT field_id, attribute_id FROM field WHERE field_id = ?').get(textObj.field_id);
+          if (existingField && Number(existingField.attribute_id || 0) === Number(attributeId || 0)) {
+            fieldId = existingField.field_id;
+          }
         }
         if (!fieldId) {
           // Insert field with the DB-safe type
-          const fieldResult = insertField.run(fieldKey, fieldLabel, dbFieldType, scope, fieldInitiativeId, rulesJson);
+          const fieldResult = insertField.run(
+            fieldKey,
+            fieldLabel,
+            dbFieldType,
+            scope,
+            fieldInitiativeId,
+            attributeId,
+            textObj.save_for_reuse === false ? 0 : 1,
+            rulesJson
+          );
           fieldId = fieldResult.lastInsertRowid;
 
-          // Insert options for select/choice/multiselect types (use dbFieldType for the check since radio maps to choice)
-          if ((dbFieldType === 'select' || dbFieldType === 'choice' || dbFieldType === 'multiselect') && Array.isArray(textObj.options)) {
+          // Answer choices are stored independently from the scalar return type.
+          if (['select', 'radio', 'checkbox', 'multiselect', 'choice'].includes(uiFieldType) && Array.isArray(textObj.options)) {
             textObj.options.forEach((opt, idx) => {
               insertOption.run(fieldId, opt, opt, idx);
             });
@@ -180,7 +221,8 @@ export async function POST(request) {
             question: fieldLabel,
             type: uiFieldType,
             required: !!required,
-            ...((dbFieldType === 'select' || dbFieldType === 'choice' || dbFieldType === 'multiselect') && textObj.options ? { options: textObj.options } : {}),
+            attribute_id: attributeId,
+            ...(['select', 'radio', 'checkbox', 'multiselect', 'choice'].includes(uiFieldType) && textObj.options ? { options: textObj.options } : {}),
             ...(dbFieldType === 'yesno' && textObj.subQuestions ? { subQuestions: textObj.subQuestions } : {}),
             ...(helpText ? { help_text: helpText } : {})
           }
@@ -235,36 +277,7 @@ export async function DELETE(request) {
     // Get template name before deleting for audit log
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
-    const tableExists = (tableName) =>
-      !!db.prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?').get(tableName);
-
-    const deleteTx = db.transaction((id) => {
-      const quoteSurveyIds = tableExists('surveys')
-        ? db
-            .prepare(`SELECT id FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`)
-            .all(id)
-            .map((r) => r.id)
-        : [];
-
-      if (quoteSurveyIds.length && tableExists('reports')) {
-        const deleteReport = db.prepare('DELETE FROM reports WHERE survey_id = ?');
-        quoteSurveyIds.forEach((sid) => deleteReport.run(sid));
-      }
-
-      if (tableExists('surveys')) {
-        db.prepare(`DELETE FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`).run(String(id));
-      }
-
-      if (tableExists('survey_distribution')) {
-        db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
-      }
-
-      if (tableExists('form')) {
-        db.prepare('DELETE FROM form WHERE form_id = ?').run(id);
-      }
-    });
-
-    deleteTx(templateId);
+    const deleted = deleteSurveyTemplateData(db, templateId);
 
     logAudit(db, {
       event: 'survey.deleted',
@@ -275,7 +288,7 @@ export async function DELETE(request) {
     });
 
     return new Response(
-      JSON.stringify({ success: true, templateId }),
+      JSON.stringify({ success: true, templateId, deleted }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (err) {

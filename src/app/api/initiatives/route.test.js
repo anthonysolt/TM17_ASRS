@@ -79,6 +79,7 @@ describe('/api/initiatives integration', () => {
         name: 'New Initiative',
         description: 'Created via test',
         attributes: ['Grade'],
+        attribute_variables: [{ name: 'Grade', data_type: 'number' }],
         questions: ['How are you?'],
       }),
     });
@@ -86,10 +87,14 @@ describe('/api/initiatives integration', () => {
     const res = await POST(req);
     const payload = await res.json();
     const row = state.db.prepare('SELECT initiative_name FROM initiative WHERE initiative_id = ?').get(payload.initiative.id);
+    const attribute = state.db.prepare(
+      'SELECT name, data_type FROM initiative_attribute WHERE initiative_id = ?'
+    ).get(payload.initiative.id);
 
     expect(res.status).toBe(200);
     expect(payload.success).toBe(true);
     expect(row.initiative_name).toBe('New Initiative');
+    expect(attribute).toEqual({ name: 'Grade', data_type: 'number' });
     expect(state.writeFileMock).toHaveBeenCalled();
   });
 });

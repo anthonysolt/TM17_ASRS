@@ -196,22 +196,17 @@ export default function SurveyPage() {
 
     const newInvalidFields = {};
 
-    // Validate personal info
-    if (!firstName.trim()) newInvalidFields.firstName = true;
-    if (!lastName.trim()) newInvalidFields.lastName = true;
-    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) newInvalidFields.email = true;
+    // The default feedback form collects contact information. Published
+    // templates display only their authored survey questions.
+    if (!surveyTemplate) {
+      if (!firstName.trim()) newInvalidFields.firstName = true;
+      if (!lastName.trim()) newInvalidFields.lastName = true;
+      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) newInvalidFields.email = true;
+    } else if (!firstName.trim()) {
+      newInvalidFields.firstName = true;
+    }
 
     if (surveyTemplate) {
-      // Validate personal info template fields (phone, school, grade)
-      personalInfoFields.forEach((pf) => {
-        const isRequired = pf.required ?? pf.text?.required ?? true;
-        if (!isRequired) return;
-        if (pf._piKey === 'phone' && !phone.trim()) newInvalidFields.phone = true;
-        if (pf._piKey === 'school' && !school.trim()) newInvalidFields.school = true;
-        if (pf._piKey === 'grade' && !grade.trim()) newInvalidFields.grade = true;
-        // name and email are already validated above
-      });
-
       // Template survey: validate non-personal-info questions
       surveyQuestions.forEach((q) => {
         const isQuestionRequired = q.required ?? q.text?.required ?? true;
@@ -225,7 +220,7 @@ export default function SurveyPage() {
           if (Object.keys(answers).length < questionSubQuestions.length) {
             newInvalidFields[`question_${qId}`] = true;
           }
-        } else if (questionType === 'multiselect') {
+        } else if (questionType === 'multiselect' || questionType === 'checkbox') {
           if (!templateResponses[qId] || templateResponses[qId].length === 0) {
             newInvalidFields[`question_${qId}`] = true;
           }
@@ -296,25 +291,19 @@ export default function SurveyPage() {
       let payload;
 
       if (surveyTemplate) {
+        const anonymousEmail = `anonymous+${surveyTemplate.id}-${Date.now()}@asrs.local`;
         // Map personal info fields back to their template question IDs
         const mergedAnswers = { ...templateResponses };
         personalInfoFields.forEach((pf) => {
-          if (pf._piKey === 'name') mergedAnswers[pf.id] = `${firstName.trim()} ${lastName.trim()}`;
-          if (pf._piKey === 'email') mergedAnswers[pf.id] = email.trim();
-          if (pf._piKey === 'phone') mergedAnswers[pf.id] = phone.trim();
-          if (pf._piKey === 'school') mergedAnswers[pf.id] = school.trim();
-          if (pf._piKey === 'grade') mergedAnswers[pf.id] = grade.trim();
+          if (pf._piKey === 'name') mergedAnswers[pf.id] = firstName.trim();
+          if (pf._piKey === 'email') mergedAnswers[pf.id] = anonymousEmail;
+          if (['phone', 'school', 'grade'].includes(pf._piKey)) mergedAnswers[pf.id] = 'Not collected';
         });
 
         payload = {
-          name: `${firstName.trim()} ${lastName.trim()}`,
-          email: email.trim(),
+          name: firstName.trim(),
+          email: anonymousEmail,
           responses: {
-            firstName: firstName.trim(),
-            lastName: lastName.trim(),
-            phone: phone.trim(),
-            school: school.trim(),
-            grade: grade.trim(),
             templateId: surveyTemplate.id,
             templateTitle: surveyTemplate.title,
             templateAnswers: mergedAnswers,
@@ -412,11 +401,11 @@ export default function SurveyPage() {
 
   // Identify personal-info fields from template questions
   const PERSONAL_INFO_PATTERNS = [
-    { pattern: /\b(full\s*name|first\s*name|last\s*name|^name$)\b/i, key: 'name' },
-    { pattern: /\b(email|e-mail)\b/i, key: 'email' },
-    { pattern: /\b(phone|telephone|mobile|cell)\b/i, key: 'phone' },
-    { pattern: /\bschool\b/i, key: 'school' },
-    { pattern: /\bgrade\b/i, key: 'grade' },
+    { pattern: /^(full\s*name|first\s*name|last\s*name|name)$/i, key: 'name' },
+    { pattern: /^(email|e-mail|email address)$/i, key: 'email' },
+    { pattern: /^(phone|phone number|telephone|mobile|cell)$/i, key: 'phone' },
+    { pattern: /^(school|school name)$/i, key: 'school' },
+    { pattern: /^(grade|grade level)$/i, key: 'grade' },
   ];
 
   const classifyTemplateQuestions = (questions) => {
@@ -437,11 +426,6 @@ export default function SurveyPage() {
   const { personalInfoFields, surveyQuestions } = surveyTemplate
     ? classifyTemplateQuestions(surveyTemplate.questions)
     : { personalInfoFields: [], surveyQuestions: [] };
-
-  // Whether template has specific personal info fields
-  const hasTemplatePhone = personalInfoFields.some((f) => f._piKey === 'phone');
-  const hasTemplateSchool = personalInfoFields.some((f) => f._piKey === 'school');
-  const hasTemplateGrade = personalInfoFields.some((f) => f._piKey === 'grade');
 
   // Shared input style
   const inputStyle = {
@@ -724,7 +708,8 @@ export default function SurveyPage() {
 
                       <fieldset disabled={isSubmitting} style={{ border: 'none', margin: 0, padding: 0, minInlineSize: 0 }}>
 
-                        {/* ---- Section: Personal Information ---- */}
+                        {/* ---- Section: Personal Information (default form only) ---- */}
+                        {!surveyTemplate && (
                         <div style={{ borderBottom: '1px solid #E5E7EB', paddingBottom: '1.25rem', marginBottom: '1.25rem' }}>
                           <h2 style={{ fontSize: '1.1rem', fontWeight: '600', color: '#111827', marginBottom: '1rem' }}>
                             Personal Information
@@ -784,68 +769,27 @@ export default function SurveyPage() {
                             {invalidFields.email && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>{!email.trim() ? 'Email address is required.' : 'Please enter a valid email address.'}</span>}
                           </div>
 
-                          {/* Phone Number — shown when template has a phone field */}
-                          {hasTemplatePhone && (
-                            <div id="field-phone" style={fieldGroupStyle}>
-                              <label style={labelStyle}>
-                                Phone Number {personalInfoFields.find(f => f._piKey === 'phone')?.required !== false && <span style={{ color: '#E67E22' }}>*</span>}
-                              </label>
-                              <input
-                                type="tel"
-                                placeholder="(555) 123-4567"
-                                value={phone}
-                                onChange={(e) => {
-                                  setPhone(e.target.value);
-                                  if (invalidFields.phone) setInvalidFields((p) => ({ ...p, phone: false }));
-                                }}
-                                style={invalidFields.phone ? invalidInputStyle : inputStyle}
-                              />
-                              {invalidFields.phone && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>Phone number is required.</span>}
-                            </div>
-                          )}
-
-                          {/* School & Grade — shown when template has those fields */}
-                          {(hasTemplateSchool || hasTemplateGrade) && (
-                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                              {hasTemplateSchool && (
-                                <div id="field-school" style={{ ...fieldGroupStyle, flex: '1 1 45%', minWidth: '200px' }}>
-                                  <label style={labelStyle}>
-                                    School {personalInfoFields.find(f => f._piKey === 'school')?.required !== false && <span style={{ color: '#E67E22' }}>*</span>}
-                                  </label>
-                                  <input
-                                    type="text"
-                                    placeholder="Enter your school"
-                                    value={school}
-                                    onChange={(e) => {
-                                      setSchool(e.target.value);
-                                      if (invalidFields.school) setInvalidFields((p) => ({ ...p, school: false }));
-                                    }}
-                                    style={invalidFields.school ? invalidInputStyle : inputStyle}
-                                  />
-                                  {invalidFields.school && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>School is required.</span>}
-                                </div>
-                              )}
-                              {hasTemplateGrade && (
-                                <div id="field-grade" style={{ ...fieldGroupStyle, flex: '1 1 45%', minWidth: '200px' }}>
-                                  <label style={labelStyle}>
-                                    Grade {personalInfoFields.find(f => f._piKey === 'grade')?.required !== false && <span style={{ color: '#E67E22' }}>*</span>}
-                                  </label>
-                                  <input
-                                    type="text"
-                                    placeholder="Enter your grade"
-                                    value={grade}
-                                    onChange={(e) => {
-                                      setGrade(e.target.value);
-                                      if (invalidFields.grade) setInvalidFields((p) => ({ ...p, grade: false }));
-                                    }}
-                                    style={invalidFields.grade ? invalidInputStyle : inputStyle}
-                                  />
-                                  {invalidFields.grade && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>Grade is required.</span>}
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
+                        )}
+
+                        {surveyTemplate && (
+                          <div id="field-firstName" style={{ ...fieldGroupStyle, marginBottom: '1.25rem' }}>
+                            <label style={labelStyle}>
+                              Name <span style={{ color: '#E67E22' }}>*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={firstName}
+                              onChange={(e) => {
+                                setFirstName(e.target.value);
+                                if (invalidFields.firstName) setInvalidFields((p) => ({ ...p, firstName: false }));
+                              }}
+                              placeholder="Enter your name"
+                              style={invalidFields.firstName ? invalidInputStyle : inputStyle}
+                            />
+                            {invalidFields.firstName && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>Name is required.</span>}
+                          </div>
+                        )}
 
                         {surveyTemplate ? (
                           /* ---- Section: Template Questions (personal info filtered out) ---- */
@@ -871,7 +815,23 @@ export default function SurveyPage() {
                                     {questionText} {isRequired && <span style={{ color: '#E67E22' }}>*</span>}
                                   </label>
 
-                                  {questionType === 'text' && (
+                                  {['text', 'email', 'url'].includes(questionType) && (
+                                    <>
+                                      <input
+                                        type={questionType === 'text' ? 'text' : questionType}
+                                        value={templateResponses[qId] || ''}
+                                        onChange={(e) => {
+                                          setTemplateResponses({ ...templateResponses, [qId]: e.target.value });
+                                          if (isInvalid) setInvalidFields((p) => ({ ...p, [`question_${qId}`]: false }));
+                                        }}
+                                        placeholder="Enter your response..."
+                                        style={isInvalid ? invalidInputStyle : inputStyle}
+                                      />
+                                      {isInvalid && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>This field is required.</span>}
+                                    </>
+                                  )}
+
+                                  {questionType === 'textarea' && (
                                     <>
                                       <textarea
                                         value={templateResponses[qId] || ''}
@@ -879,8 +839,8 @@ export default function SurveyPage() {
                                           setTemplateResponses({ ...templateResponses, [qId]: e.target.value });
                                           if (isInvalid) setInvalidFields((p) => ({ ...p, [`question_${qId}`]: false }));
                                         }}
-                                        rows={3}
-                                        placeholder="Enter your response..."
+                                        rows={5}
+                                        placeholder="Enter your detailed response..."
                                         style={{ ...(isInvalid ? invalidInputStyle : inputStyle), resize: 'vertical', fontFamily: 'inherit' }}
                                       />
                                       {isInvalid && <span style={{ color: '#ef4444', fontSize: '0.8rem' }}>This field is required.</span>}
@@ -968,7 +928,7 @@ export default function SurveyPage() {
                                     </>
                                   )}
 
-                                  {(questionType === 'choice' || questionType === 'select') && questionOptions.length > 0 && (
+                                  {(['choice', 'radio', 'select'].includes(questionType)) && questionOptions.length > 0 && (
                                     <>
                                       <div style={{
                                         display: 'flex', flexDirection: 'column', gap: '0.5rem',
@@ -1001,7 +961,7 @@ export default function SurveyPage() {
                                     </>
                                   )}
 
-                                  {questionType === 'multiselect' && questionOptions.length > 0 && (
+                                  {(['multiselect', 'checkbox'].includes(questionType)) && questionOptions.length > 0 && (
                                     <>
                                       <div style={{
                                         display: 'flex', flexDirection: 'column', gap: '0.5rem',

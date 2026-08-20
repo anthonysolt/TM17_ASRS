@@ -30,6 +30,7 @@ import ExportPanel from './ExportPanel';
 import SharePanel from './SharePanel';
 import AIInsightsPanel from './AIInsightsPanel';
 import { getSortedReportData } from '@/lib/data-service';
+import { filterReportRows, findReportColumn } from '@/lib/report-table-filters';
 
 export default function ReportDashboard({ reportData, trendData, selectedInitiative, userRole, reportDbId, preloadedInsights }) {
   // ---- STATE for filters and sorts ----
@@ -53,6 +54,14 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
   // Whether the Data Tools section is expanded
   const [showDataTools, setShowDataTools] = useState(false);
 
+  const reportColumns = useMemo(() => {
+    const firstRow = reportData?.tableData?.[0];
+    if (!firstRow) return selectedInitiative?.attributes || [];
+    return Object.keys(firstRow).filter((column) =>
+      !['id', 'submission_id', 'submitted_at'].includes(column)
+    );
+  }, [reportData, selectedInitiative]);
+
   /**
    * useMemo — Recalculates filtered & sorted table data only when
    * the filters, sorts, or base report data change. This prevents
@@ -62,24 +71,7 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
     if (!reportData?.tableData) return [];
 
     // Step 1: Apply filters (simulates database WHERE clause per REP020)
-    let data = [...reportData.tableData];
-
-    // Apply each active filter
-    Object.entries(activeFilters).forEach(([key, value]) => {
-      if (value && value !== 'All') {
-        data = data.filter(row => {
-          // Find the matching key in the row object
-          const rowKeys = Object.keys(row);
-          const matchKey = rowKeys.find(k =>
-            k.toLowerCase() === key.toLowerCase().replace(/\s/g, '')
-          );
-          if (matchKey) {
-            return String(row[matchKey]).toLowerCase().includes(String(value).toLowerCase());
-          }
-          return true;
-        });
-      }
-    });
+    let data = filterReportRows(reportData.tableData, activeFilters);
 
     // Step 2: Apply sorts (simulates database ORDER BY per REP021)
     // Per REP022, filtering happens BEFORE sorting
@@ -100,38 +92,21 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
     const hasActiveFilters = Object.values(activeFilters).some(v => v && v !== 'All');
     if (!hasActiveFilters) return reportData.chartData;
 
-    const filtered = processedTableData;
+    const sampleRow = reportData.tableData[0];
+    return Object.fromEntries(Object.entries(reportData.chartData).map(([chartName, originalSeries]) => {
+      if (!Array.isArray(originalSeries) || !sampleRow) return [chartName, originalSeries];
+      const column = findReportColumn(sampleRow, chartName);
+      if (!column) return [chartName, originalSeries];
 
-    // Recompute gradeDistribution from filtered rows
-    const gradeCounts = {};
-    filtered.forEach(row => {
-      const grade = row.grade;
-      if (grade != null) {
-        const label = String(grade).includes('Grade') ? String(grade) : `${grade} Grade`;
-        gradeCounts[label] = (gradeCounts[label] || 0) + 1;
-      }
-    });
-    const gradeDistribution = Object.entries(gradeCounts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    // Recompute interestLevels from filtered rows
-    const interestCounts = {};
-    filtered.forEach(row => {
-      const interest = row.interestLevel;
-      if (interest != null) {
-        interestCounts[String(interest)] = (interestCounts[String(interest)] || 0) + 1;
-      }
-    });
-    const interestLevels = Object.entries(interestCounts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-
-    return {
-      gradeDistribution: gradeDistribution.length > 0 ? gradeDistribution : reportData.chartData.gradeDistribution,
-      monthlyParticipation: reportData.chartData.monthlyParticipation,
-      interestLevels: interestLevels.length > 0 ? interestLevels : reportData.chartData.interestLevels,
-    };
+      const counts = new Map();
+      processedTableData.forEach((row) => {
+        const value = row[column];
+        if (value == null || value === '') return;
+        const label = String(value);
+        counts.set(label, (counts.get(label) || 0) + 1);
+      });
+      return [chartName, [...counts.entries()].map(([name, value]) => ({ name, value }))];
+    }));
   }, [reportData, processedTableData, activeFilters]);
 
   /**
@@ -344,14 +319,14 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
       <div className="filter-sort-grid">
         {/* Filter Panel — up to 7 attribute filters (per REP001/REP020) */}
         <FilterPanel
-          attributes={selectedInitiative?.attributes || []}
+          attributes={reportColumns}
           activeFilters={activeFilters}
           onFiltersChange={setActiveFilters}
           tableData={reportData.tableData}
         />
         {/* Sort Panel — up to 7 sorting levels (per REP002/REP021) */}
         <SortPanel
-          attributes={selectedInitiative?.attributes || []}
+          attributes={reportColumns}
           activeSorts={activeSorts}
           onSortsChange={setActiveSorts}
         />

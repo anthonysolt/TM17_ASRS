@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db, initializeDatabase } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/server-auth';
+import { logAudit } from '@/lib/audit';
 
 initializeDatabase();
 
@@ -86,5 +87,49 @@ export async function GET(request) {
       { error: 'Failed to fetch QR codes', details: error.message },
       { status: 500 }
     );
+  }
+}
+
+export async function DELETE(request) {
+  try {
+    const auth = requirePermission(request, db, 'surveys.distribute');
+    if (auth.error) return auth.error;
+
+    const { searchParams } = new URL(request.url);
+    const qrCodeId = Number(searchParams.get('qrCodeId'));
+    if (!Number.isInteger(qrCodeId) || qrCodeId <= 0) {
+      return NextResponse.json({ error: 'A valid qrCodeId is required' }, { status: 400 });
+    }
+
+    const qrCode = db.prepare(`
+      SELECT qr_code_id, qr_code_key, qr_type, description
+      FROM qr_codes
+      WHERE qr_code_id = ?
+        AND qr_type IN ('survey', 'survey_template')
+    `).get(qrCodeId);
+
+    if (!qrCode) {
+      return NextResponse.json({ error: 'Survey QR code not found' }, { status: 404 });
+    }
+
+    // qr_scans are removed by the schema's ON DELETE CASCADE relationship.
+    db.prepare('DELETE FROM qr_codes WHERE qr_code_id = ?').run(qrCodeId);
+
+    logAudit(db, {
+      event: 'qr_code.deleted',
+      userEmail: auth.user.email,
+      targetType: 'qr_code',
+      targetId: String(qrCodeId),
+      payload: {
+        qrCodeKey: qrCode.qr_code_key,
+        qrType: qrCode.qr_type,
+        description: qrCode.description,
+      },
+    });
+
+    return NextResponse.json({ success: true, qrCodeId });
+  } catch (error) {
+    console.error('[QR Code Delete API] Error:', error);
+    return NextResponse.json({ error: 'Failed to delete QR code' }, { status: 500 });
   }
 }

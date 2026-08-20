@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { getServiceContainer } from '@/lib/container/service-container';
 import { logAudit } from '@/lib/audit';
+import { syncInitiativeAttributes } from '@/lib/initiative-attributes';
 import { toInitiativeDto } from '@/lib/adapters/initiative-adapter';
 import { requireAuth, requirePermission } from '@/lib/auth/server-auth';
 
@@ -50,7 +51,12 @@ export async function GET(request, { params }) {
     if (!row) {
       return NextResponse.json({ error: 'Initiative not found' }, { status: 404 });
     }
-    return NextResponse.json({ initiative: toInitiativeDto(row) });
+    const initiative = toInitiativeDto(row);
+    initiative.attribute_variables = db.prepare(`
+      SELECT attribute_id, name, data_type, initiative_id
+      FROM initiative_attribute WHERE initiative_id = ? ORDER BY name
+    `).all(Number(id));
+    return NextResponse.json({ initiative });
   } catch (error) {
     console.error('Error fetching initiative:', error);
     return NextResponse.json({ error: 'Failed to load initiative' }, { status: 500 });
@@ -84,6 +90,11 @@ export async function PUT(request, { params }) {
     db.prepare(
       'UPDATE initiative SET initiative_name = ?, description = ?, attributes = ?, questions = ?, settings = ?, updated_at = ? WHERE initiative_id = ?'
     ).run(name, description, JSON.stringify(attributes), JSON.stringify(questions), JSON.stringify(settings), now, Number(id));
+    syncInitiativeAttributes(
+      db,
+      Number(id),
+      Array.isArray(body.attribute_variables) ? body.attribute_variables : attributes
+    );
 
     const updated = db.prepare('SELECT * FROM initiative WHERE initiative_id = ?').get(Number(id));
     await syncInitiativesToJson(db);
