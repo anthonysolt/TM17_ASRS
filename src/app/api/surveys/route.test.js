@@ -4,16 +4,10 @@ const dbProxy = vi.hoisted(() => ({
   transaction: (...args) => state.db.transaction(...args),
   exec: (...args) => state.db.exec(...args),
 }));
-const generateAIReportMock = vi.hoisted(() => vi.fn());
-
 vi.mock('@/lib/db', () => ({
   default: dbProxy,
   db: dbProxy,
   initializeDatabase: vi.fn(),
-}));
-
-vi.mock('@/lib/openai', () => ({
-  generateAIReport: (...args) => generateAIReportMock(...args),
 }));
 
 import { GET, POST, DELETE } from '@/app/api/surveys/route';
@@ -29,8 +23,6 @@ describe('/api/surveys integration', () => {
 
   beforeEach(() => {
     state.db = createTestDb();
-    generateAIReportMock.mockReset();
-    generateAIReportMock.mockResolvedValue({ summary: 'ok', insights: ['one'] });
   });
 
   afterEach(() => {
@@ -50,7 +42,7 @@ describe('/api/surveys integration', () => {
     expect(res.status).toBe(400);
   });
 
-  test('POST persists survey and report', async () => {
+  test('POST persists a survey without generating a report', async () => {
     const req = new Request('http://localhost:3000/api/surveys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -66,14 +58,65 @@ describe('/api/surveys integration', () => {
 
     expect(res.status).toBe(200);
     expect(payload.success).toBe(true);
-    expect(payload.report.summary).toBe('ok');
+    expect(payload).not.toHaveProperty('report');
 
     const surveyCount = state.db.prepare('SELECT COUNT(*) AS c FROM surveys').get().c;
     const reportCount = state.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE survey_id IS NOT NULL').get().c;
     expect(surveyCount).toBe(1);
-    expect(reportCount).toBe(1);
+    expect(reportCount).toBe(0);
     expect(payload.submittedAt).toBeTruthy();
     expect(payload.survey).toMatchObject({ name: 'Alex', email: 'a@example.com' });
+  });
+
+  test('POST stores dropdown and multiple-choice labels as text', async () => {
+    state.db.exec(`
+      CREATE TABLE survey_distribution (
+        distribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_template_id TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        response_count INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    const initiativeId = Number(state.db.prepare(
+      "INSERT INTO initiative (initiative_name, attributes, questions, settings) VALUES (?, '[]', '[]', '{}')"
+    ).run('Typed Answers').lastInsertRowid);
+    const formId = Number(state.db.prepare(
+      'INSERT INTO form (initiative_id, form_name, is_published) VALUES (?, ?, 1)'
+    ).run(initiativeId, 'Typed Survey').lastInsertRowid);
+    const selectId = Number(state.db.prepare(
+      "INSERT INTO field (field_key, field_label, field_type, scope, validation_rules) VALUES (?, ?, 'text', 'common', ?)"
+    ).run('school', 'School', JSON.stringify({ ui_type: 'select' })).lastInsertRowid);
+    const radioId = Number(state.db.prepare(
+      "INSERT INTO field (field_key, field_label, field_type, scope, validation_rules) VALUES (?, ?, 'text', 'common', ?)"
+    ).run('recommend', 'Recommend?', JSON.stringify({ ui_type: 'radio' })).lastInsertRowid);
+    state.db.prepare('INSERT INTO form_questions (form_id, field_id, display_order, required) VALUES (?, ?, ?, 1)').run(formId, selectId, 0);
+    state.db.prepare('INSERT INTO form_questions (form_id, field_id, display_order, required) VALUES (?, ?, ?, 1)').run(formId, radioId, 1);
+    state.db.prepare('INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?)').run(selectId, 'Rutgers', 'Rutgers', 0);
+    state.db.prepare('INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?)').run(radioId, 'Yes', 'Yes', 0);
+
+    const res = await POST(new Request('http://localhost:3000/api/surveys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Taylor',
+        email: 'taylor@example.com',
+        templateId: formId,
+        responses: { templateId: formId, templateAnswers: { [selectId]: 'Rutgers', [radioId]: 'Yes' } },
+      }),
+    }));
+
+    expect(res.status).toBe(200);
+    expect(state.db.prepare(
+      `SELECT fq.field_id, sv.value_text, sv.value_number, sv.value_bool, sv.value_json
+       FROM submission_value sv
+       JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+       ORDER BY fq.field_id`
+    ).all()).toEqual([
+      { field_id: selectId, value_text: 'Rutgers', value_number: null, value_bool: null, value_json: null },
+      { field_id: radioId, value_text: 'Yes', value_number: null, value_bool: null, value_json: null },
+    ]);
   });
 
   test('DELETE removes survey and related reports', async () => {

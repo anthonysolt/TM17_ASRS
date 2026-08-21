@@ -128,7 +128,7 @@ export function seedEgamingSurvey(db) {
         .run(egamingInitId, FORM_NAME, 'Feedback survey for the E-Gaming and Careers Program. Responses are anonymous.');
       egamingFormId = r.lastInsertRowid;
     }
-    db.prepare('DELETE FROM form_field WHERE form_id = ?').run(egamingFormId);
+    db.prepare('DELETE FROM form_questions WHERE form_id = ?').run(egamingFormId);
 
     const WORKSHOPS_NOTE = 'You can comment on the content of the workshops, activities, and/or speakers';
 
@@ -147,7 +147,7 @@ export function seedEgamingSurvey(db) {
     ];
 
     const insertFF = db.prepare(
-      'INSERT INTO form_field (form_id, field_id, display_order, required, help_text) VALUES (?,?,?,?,?)'
+      'INSERT INTO form_questions (form_id, field_id, display_order, required, help_text) VALUES (?,?,?,?,?)'
     );
 
     for (let i = 0; i < formFieldOrder.length; i++) {

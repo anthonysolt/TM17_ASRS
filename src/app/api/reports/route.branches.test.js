@@ -3,7 +3,7 @@ const validateReportCreatePayloadMock = vi.hoisted(() => vi.fn());
 const validateReportDeleteParamsMock = vi.hoisted(() => vi.fn());
 const validateReportQueryParamsMock = vi.hoisted(() => vi.fn());
 const validateReportUpdatePayloadMock = vi.hoisted(() => vi.fn());
-const queryTableDataMock = vi.hoisted(() => vi.fn());
+const querySelectedQuestionDataMock = vi.hoisted(() => vi.fn());
 const toReportListItemDtoMock = vi.hoisted(() => vi.fn((r) => r));
 const toReportDetailDtoMock = vi.hoisted(() => vi.fn((r) => r));
 const requirePermissionMock = vi.hoisted(() => vi.fn(() => ({ user: { permissions: ['surveys.take', 'initiatives.manage', 'reporting.view', 'reports.create', 'forms.create', 'surveys.distribute', 'goals.manage', 'performance.view', 'budgets.manage', 'conflicts.manage', 'users.manage', 'audit.view', 'import.manage'] } })));
@@ -15,7 +15,7 @@ vi.mock('@/lib/report-validation', () => ({
   validateReportUpdatePayload: validateReportUpdatePayloadMock,
 }));
 
-vi.mock('@/lib/query-helpers', () => ({ queryTableData: queryTableDataMock }));
+vi.mock('@/lib/query-helpers', () => ({ querySelectedQuestionData: querySelectedQuestionDataMock }));
 vi.mock('@/lib/adapters/report-adapter', () => ({
   toReportListItemDto: toReportListItemDtoMock,
   toReportDetailDto: toReportDetailDtoMock,
@@ -48,7 +48,7 @@ describe('/api/reports branch coverage', () => {
     validateReportDeleteParamsMock.mockReset();
     validateReportQueryParamsMock.mockReset();
     validateReportUpdatePayloadMock.mockReset();
-    queryTableDataMock.mockReset();
+    querySelectedQuestionDataMock.mockReset();
     toReportListItemDtoMock.mockClear();
     toReportDetailDtoMock.mockClear();
     requirePermissionMock.mockReset();
@@ -75,7 +75,7 @@ describe('/api/reports branch coverage', () => {
     validateReportCreatePayloadMock.mockReturnValueOnce({ valid: false, error: 'bad' });
     expect((await POST(req({}))).status).toBe(400);
 
-    validateReportCreatePayloadMock.mockReturnValue({ valid: true, value: { initiativeId: 2, name: 'R1' } });
+    validateReportCreatePayloadMock.mockReturnValue({ valid: true, value: { initiativeId: 2, name: 'R1', questionSelections: [{ id: 5, method: 'delta_halves' }] } });
     requirePermissionMock.mockReturnValueOnce({ error: new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }) });
     expect((await POST(req({ initiativeId: 2 }))).status).toBe(403);
 
@@ -98,13 +98,13 @@ describe('/api/reports branch coverage', () => {
       if (query.includes('INSERT INTO reports')) return { run: () => ({ lastInsertRowid: 7 }) };
       return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
-    queryTableDataMock.mockReturnValue([{ a: 1 }]);
+    querySelectedQuestionDataMock.mockReturnValue({ tableData: [{ Question: 1 }], questions: [{ field_id: 5, field_label: 'Question', column: 'Question' }] });
     reportEngineMock.validateTrendConfig.mockReturnValueOnce({ valid: false, error: 'trend bad' });
     expect((await POST(req({ initiativeId: 2 }))).status).toBe(400);
 
     reportEngineMock.validateTrendConfig.mockReturnValue({ valid: true, normalized: { variables: [] } });
     reportEngineMock.processReportData.mockReturnValue({ filteredData: [], metrics: {}, explainability: {} });
-    reportEngineMock.computeTrendData.mockReturnValue({});
+    reportEngineMock.computeTrendData.mockReturnValue([]);
     expect((await POST(req({ initiativeId: 2, name: 'R1' }))).status).toBe(200);
 
     reportEngineMock.processReportData.mockImplementationOnce(() => { throw new Error('boom'); });

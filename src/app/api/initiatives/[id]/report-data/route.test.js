@@ -53,16 +53,19 @@ describe('/api/initiatives/:id/report-data GET integration', () => {
     ).run().lastInsertRowid;
 
     state.db.prepare(
-      'INSERT INTO form_field (form_id, field_id, display_order) VALUES (?, ?, 0)'
+      'INSERT INTO form_questions (form_id, field_id, display_order) VALUES (?, ?, 0)'
     ).run(formId, fieldId);
+    const formQuestionId = state.db.prepare(
+      'SELECT form_question_id FROM form_questions WHERE form_id = ? AND field_id = ?'
+    ).get(formId, fieldId).form_question_id;
 
     const subId = state.db.prepare(
       'INSERT INTO submission (initiative_id, form_id) VALUES (?, ?)'
     ).run(initiativeId, formId).lastInsertRowid;
 
     state.db.prepare(
-      'INSERT INTO submission_value (submission_id, field_id, value_text) VALUES (?, ?, ?)'
-    ).run(subId, fieldId, '7th');
+      'INSERT INTO submission_value (submission_id, form_question_id, value_text) VALUES (?, ?, ?)'
+    ).run(subId, formQuestionId, '7th');
 
     const res = await GET(new Request(`http://localhost:3000/api/initiatives/${initiativeId}/report-data`), {
       params: Promise.resolve({ id: String(initiativeId) }),
@@ -72,7 +75,7 @@ describe('/api/initiatives/:id/report-data GET integration', () => {
     expect(res.status).toBe(200);
     expect(payload.initiativeName).toBe('Student Success');
     expect(payload.summary.totalParticipants).toBe(1);
-    expect(payload.chartData.grade).toEqual([{ name: '7th', value: 1 }]);
+    expect(payload.chartData.Grade).toEqual([{ name: '7th', value: 1 }]);
     expect(payload.tableData).toEqual([{ grade: '7th', score: 88 }]);
   });
 

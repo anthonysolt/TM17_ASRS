@@ -62,14 +62,15 @@ export async function GET(request, { params }) {
     let submissionValues = [];
     if (submissionIds.length > 0) {
       submissionValues = db.prepare(`
-        SELECT sv.submission_id, sv.field_id, f.field_label,
+        SELECT sv.submission_id, fq.field_id, f.field_label,
                COALESCE(sv.value_text, CAST(sv.value_number AS TEXT), sv.value_date,
                  CASE WHEN sv.value_bool IS NOT NULL THEN CASE sv.value_bool WHEN 1 THEN 'Yes' ELSE 'No' END END,
                  sv.value_json) AS display_value
         FROM submission_value sv
-        JOIN field f ON f.field_id = sv.field_id
+        JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+        JOIN field f ON f.field_id = fq.field_id
         WHERE sv.submission_id IN (${submissionIds.map(() => '?').join(',')})
-        ORDER BY sv.field_id
+        ORDER BY fq.field_id
       `).all(...submissionIds);
     }
 

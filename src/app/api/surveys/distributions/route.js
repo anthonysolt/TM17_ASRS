@@ -170,3 +170,35 @@ export async function GET(request) {
     );
   }
 }
+
+export async function DELETE(request) {
+  try {
+    initializeDatabase();
+    const auth = requirePermission(request, db, 'surveys.distribute');
+    if (auth.error) return auth.error;
+
+    const distributionId = Number(new URL(request.url).searchParams.get('distributionId'));
+    if (!Number.isInteger(distributionId) || distributionId <= 0) {
+      return NextResponse.json({ error: 'distributionId must be a positive integer' }, { status: 400 });
+    }
+    const existing = db.prepare(
+      'SELECT distribution_id, survey_template_id, title FROM survey_distribution WHERE distribution_id = ?'
+    ).get(distributionId);
+    if (!existing) {
+      return NextResponse.json({ error: 'Distribution not found' }, { status: 404 });
+    }
+
+    db.prepare('DELETE FROM survey_distribution WHERE distribution_id = ?').run(distributionId);
+    logAudit(db, {
+      event: 'survey_distribution.deleted',
+      userEmail: auth.user?.email,
+      targetType: 'survey_distribution',
+      targetId: String(distributionId),
+      payload: { title: existing.title, survey_template_id: existing.survey_template_id },
+    });
+    return NextResponse.json({ success: true, distributionId });
+  } catch (error) {
+    console.error('Error deleting distribution:', error);
+    return NextResponse.json({ error: 'Failed to delete distribution', details: error.message }, { status: 500 });
+  }
+}

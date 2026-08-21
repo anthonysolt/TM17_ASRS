@@ -105,6 +105,21 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
     },
   });
 
+  if (computeGoalScore(existing) < 100 && computeGoalScore(updatedGoal) >= 100) {
+    logAudit(db, {
+      event: 'goal.met',
+      userEmail,
+      targetType: 'goal',
+      targetId: String(goal_id),
+      payload: {
+        goal_name: updatedGoal.goal_name,
+        initiative_id: updatedGoal.initiative_id,
+        current_value: updatedGoal.current_value,
+        target_value: updatedGoal.target_value,
+      },
+    });
+  }
+
   return { goal: updatedGoal };
 }
 

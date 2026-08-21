@@ -29,7 +29,6 @@ import { requirePermission } from '@/lib/auth/server-auth';
 //   {
 //     "success": true,
 //     "scan": {
-//       "scanId": number,
 //       "qrCodeId": number,
 //       "scannedAt": string (ISO timestamp)
 //     },
@@ -61,15 +60,6 @@ export async function POST(request) {
         { status: 400 }
       );
     }
-
-    // Extract metadata from request headers for analytics
-    // These help us understand who is scanning the QR codes and from where
-    const ipAddress = request.headers.get('x-forwarded-for') ||
-                     request.headers.get('x-real-ip') ||
-                     'unknown';
-
-    const userAgent = request.headers.get('user-agent') || 'unknown';
-    const referrer = request.headers.get('referer') || null;
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 2: Look Up QR Code in Database
@@ -121,30 +111,14 @@ export async function POST(request) {
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4: Record the Scan in Database
     // ─────────────────────────────────────────────────────────────────────
-    // Insert a new record in the qr_scans table
-    // This creates an audit trail of all QR code usage
-    const insertScanStmt = db.prepare(`
-      INSERT INTO qr_scans (
-        qr_code_id,
-        ip_address,
-        user_agent,
-        referrer,
-        converted_to_submission
-      ) VALUES (?, ?, ?, ?, ?)
-    `);
-
-    const scanResult = insertScanStmt.run(
-      qrCode.qr_code_id,                      // Which QR code was scanned
-      ipAddress,                               // IP address of scanner
-      userAgent,                               // Browser/device info
-      referrer,                                // Where they came from
-      convertedToSubmission ? 1 : null        // Did they submit? (null = unknown yet)
-    );
-
-    const scanId = scanResult.lastInsertRowid;
+    const counterColumn = convertedToSubmission ? 'qr_conversion' : 'qr_viewcount';
+    db.prepare(`
+      UPDATE qr_codes
+      SET ${counterColumn} = ${counterColumn} + 1
+      WHERE qr_code_id = ?
+    `).run(qrCode.qr_code_id);
 
     eventBus.publish(EVENTS.QR_SCANNED, {
-      scanId: Number(scanId),
       qrCodeId: Number(qrCode.qr_code_id),
       qrCodeKey: qrCode.qr_code_key,
       convertedToSubmission: Boolean(convertedToSubmission),
@@ -161,7 +135,6 @@ export async function POST(request) {
     return NextResponse.json({
       success: true,
       scan: {
-        scanId: Number(scanId),
         qrCodeId: qrCode.qr_code_id,
         scannedAt: clock.nowIso()
       },
@@ -210,11 +183,8 @@ export async function POST(request) {
 //     "qrCode": { ... QR code details ... },
 //     "stats": {
 //       "totalScans": number,
-//       "uniqueIPs": number,
 //       "conversions": number,
-//       "conversionRate": number (percentage),
-//       "lastScannedAt": string (ISO timestamp),
-//       "scansByDate": [ { date: string, count: number }, ... ]
+//       "conversionRate": number (percentage)
 //     }
 //   }
 //
@@ -273,7 +243,9 @@ export async function GET(request) {
         created_at,
         created_by_user_id,
         is_active,
-        expires_at
+        expires_at,
+        qr_viewcount,
+        qr_conversion
       FROM qr_codes
       WHERE qr_code_key = ?
     `).get(qrCodeKey);
@@ -289,57 +261,13 @@ export async function GET(request) {
     // STEP 3: Calculate Scan Statistics
     // ─────────────────────────────────────────────────────────────────────
 
-    // Total number of scans
-    const totalScansResult = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM qr_scans
-      WHERE qr_code_id = ?
-    `).get(qrCode.qr_code_id);
-    const totalScans = totalScansResult.count;
-
-    // Number of unique IP addresses (approximate unique users)
-    const uniqueIPsResult = db.prepare(`
-      SELECT COUNT(DISTINCT ip_address) as count
-      FROM qr_scans
-      WHERE qr_code_id = ?
-    `).get(qrCode.qr_code_id);
-    const uniqueIPs = uniqueIPsResult.count;
-
-    // Number of scans that converted to submissions
-    const conversionsResult = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM qr_scans
-      WHERE qr_code_id = ? AND converted_to_submission = 1
-    `).get(qrCode.qr_code_id);
-    const conversions = conversionsResult.count;
+    const totalScans = Number(qrCode.qr_viewcount || 0);
+    const conversions = Number(qrCode.qr_conversion || 0);
 
     // Calculate conversion rate (percentage)
     const conversionRate = totalScans > 0
       ? ((conversions / totalScans) * 100).toFixed(2)
       : 0;
-
-    // Get last scan timestamp
-    const lastScanResult = db.prepare(`
-      SELECT scanned_at
-      FROM qr_scans
-      WHERE qr_code_id = ?
-      ORDER BY scanned_at DESC
-      LIMIT 1
-    `).get(qrCode.qr_code_id);
-    const lastScannedAt = lastScanResult?.scanned_at || null;
-
-    // Get scans grouped by date (last 30 days)
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const scansByDate = db.prepare(`
-      SELECT
-        DATE(scanned_at) as date,
-        COUNT(*) as count
-      FROM qr_scans
-      WHERE qr_code_id = ?
-        AND scanned_at >= ?
-      GROUP BY DATE(scanned_at)
-      ORDER BY date DESC
-    `).all(qrCode.qr_code_id, thirtyDaysAgo);
 
     // ─────────────────────────────────────────────────────────────────────
     // STEP 4: Return Statistics
@@ -359,11 +287,8 @@ export async function GET(request) {
       },
       stats: {
         totalScans,
-        uniqueIPs,
         conversions,
-        conversionRate: parseFloat(conversionRate),
-        lastScannedAt,
-        scansByDate
+        conversionRate: parseFloat(conversionRate)
       }
     });
 

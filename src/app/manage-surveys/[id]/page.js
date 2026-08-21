@@ -17,6 +17,13 @@ function statusPill(published) {
   return <span className="pill pill-gray">Draft</span>;
 }
 
+const QUESTION_TYPE_LABELS = {
+  text: 'Short Text', textarea: 'Long Text', number: 'Number', numeric: 'Number',
+  select: 'Dropdown', radio: 'Multiple Choice', choice: 'Multiple Choice',
+  checkbox: 'Checkbox', multiselect: 'Checkbox', date: 'Date', rating: 'Rating',
+  boolean: 'Yes / No', email: 'Email', url: 'URL / Link', yesno: 'Yes / No Grid',
+};
+
 export default function SurveyDetailPage({ params }) {
   const { id } = use(params);
   const router = useRouter();
@@ -35,6 +42,7 @@ export default function SurveyDetailPage({ params }) {
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editStatus, setEditStatus] = useState('active');
+  const [editQuestions, setEditQuestions] = useState([]);
   const [saving, setSaving] = useState(false);
 
   // Expanded submission
@@ -64,6 +72,16 @@ export default function SurveyDetailPage({ params }) {
         setEditTitle(tplData.title || '');
         setEditDescription(tplData.description || '');
         setEditStatus(tplData.published ? 'active' : 'draft');
+        setEditQuestions((tplData.questions || []).map(question => {
+          const text = question.text || question;
+          return {
+            id: question.id,
+            question: text.question || text.label || '',
+            type: text.type || 'text',
+            required: text.required !== false,
+            options: [...(text.options || [])],
+          };
+        }));
       } else {
         setError('Survey template not found');
         setLoading(false);
@@ -103,6 +121,7 @@ export default function SurveyDetailPage({ params }) {
           title: editTitle.trim(),
           description: editDescription.trim(),
           status: editStatus,
+          questions: editQuestions,
         }),
       });
       const data = await res.json();
@@ -118,6 +137,21 @@ export default function SurveyDetailPage({ params }) {
     setSaving(false);
   }
 
+  function updateEditQuestion(questionId, changes) {
+    setEditQuestions(current => current.map(question =>
+      question.id === questionId ? { ...question, ...changes } : question
+    ));
+  }
+
+  function updateEditOption(questionId, optionIndex, value) {
+    setEditQuestions(current => current.map(question => {
+      if (question.id !== questionId) return question;
+      const options = [...question.options];
+      options[optionIndex] = value;
+      return { ...question, options };
+    }));
+  }
+
   async function handleDeleteSubmission(surveyId) {
     if (!confirm('Delete this submission? This cannot be undone.')) return;
     try {
@@ -127,6 +161,41 @@ export default function SurveyDetailPage({ params }) {
         setSubmissions(prev => prev.filter(s => s.id !== surveyId));
       }
     } catch { setError('Failed to delete submission'); }
+  }
+
+  async function handleDeleteDistribution(distributionId) {
+    if (!confirm('Delete this distribution? This cannot be undone.')) return;
+    setError('');
+    try {
+      const res = await apiFetch(`/api/surveys/distributions?distributionId=${distributionId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to delete distribution');
+      setDistributions(current => current.filter(distribution => distribution.distribution_id !== distributionId));
+      setSuccess('Distribution deleted successfully.');
+    } catch (err) {
+      setError(err.message || 'Failed to delete distribution');
+    }
+  }
+
+  async function handleDeleteQrCode(qrCodeKey) {
+    if (!confirm('Delete this QR code and its scan history? This cannot be undone.')) return;
+    setError('');
+    try {
+      const res = await apiFetch(`/api/qr-codes?qrCodeKey=${encodeURIComponent(qrCodeKey)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to delete QR code');
+      setQrCodes(current => current.filter(qr => (qr.qr_code_key || qr.qrCodeKey) !== qrCodeKey));
+      setSuccess('QR code deleted successfully.');
+    } catch (err) {
+      setError(err.message || 'Failed to delete QR code');
+    }
+  }
+
+  function getSurveyQrUrl(qr, key) {
+    const url = new URL('/survey', window.location.origin);
+    url.searchParams.set('qr', key);
+    url.searchParams.set('template', String(qr.target_id || qr.targetId || id));
+    return url.toString();
   }
 
   if (!hydrated || loading) {
@@ -193,11 +262,6 @@ export default function SurveyDetailPage({ params }) {
             {template.initiative_name && <span style={{ fontSize: '0.82rem', color: '#6B7280' }}>{template.initiative_name}</span>}
             <span style={{ fontSize: '0.82rem', color: '#9CA3AF' }}>Created {formatDate(template.createdAt)}</span>
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn-outline" onClick={() => window.open(`/survey?template=${id}`, '_blank')}>
-            Preview Survey
-          </button>
         </div>
       </div>
 
@@ -271,7 +335,7 @@ export default function SurveyDetailPage({ params }) {
                         </div>
                         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: '0.75rem', padding: '1px 6px', borderRadius: '9999px', backgroundColor: '#FFF7ED', color: '#E67E22', border: '1px solid #FED7AA', fontWeight: 600 }}>
-                            {qType}
+                            {QUESTION_TYPE_LABELS[qType] || qType}
                           </span>
                           {isRequired && <span style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>required</span>}
                           {text.scope === 'initiative_specific' && <span style={{ fontSize: '0.75rem', padding: '1px 6px', borderRadius: '9999px', backgroundColor: '#EFF6FF', color: '#2563EB' }}>initiative</span>}
@@ -310,6 +374,7 @@ export default function SurveyDetailPage({ params }) {
                       <th>Status</th>
                       <th>Dates</th>
                       <th>Responses</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -323,6 +388,15 @@ export default function SurveyDetailPage({ params }) {
                         </td>
                         <td style={{ color: '#6B7280', fontSize: '0.85rem' }}>{d.start_date} to {d.end_date}</td>
                         <td style={{ fontWeight: 600 }}>{d.response_count || 0}</td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDistribution(d.distribution_id)}
+                            style={{ background: 'none', border: 'none', padding: 0, color: '#DC2626', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                          >
+                            Delete
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -350,6 +424,69 @@ export default function SurveyDetailPage({ params }) {
                 style={inputStyle}
                 placeholder="Survey title..."
               />
+            </div>
+
+            <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '1rem' }}>
+              <label style={labelStyle}>Questions and Answers</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {editQuestions.map((question, questionIndex) => {
+                  const hasOptions = ['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(question.type);
+                  return (
+                    <div key={question.id} style={{ padding: '1rem', border: '1px solid #E5E7EB', borderRadius: '10px', backgroundColor: '#FAFAFA' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.6rem' }}>
+                        <span style={{ fontSize: '0.8rem', color: '#6B7280', fontWeight: 600 }}>
+                          Question {questionIndex + 1} · {QUESTION_TYPE_LABELS[question.type] || question.type}
+                        </span>
+                        <label style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', fontSize: '0.8rem', color: '#374151' }}>
+                          <input
+                            type="checkbox"
+                            checked={question.required}
+                            onChange={event => updateEditQuestion(question.id, { required: event.target.checked })}
+                            style={{ accentColor: '#E67E22' }}
+                          />
+                          Required
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        value={question.question}
+                        onChange={event => updateEditQuestion(question.id, { question: event.target.value })}
+                        style={inputStyle}
+                        placeholder="Question text"
+                      />
+                      {hasOptions && (
+                        <div style={{ marginTop: '0.75rem' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#6B7280', fontWeight: 600, marginBottom: '0.4rem' }}>Answer Options</div>
+                          {question.options.map((option, optionIndex) => (
+                            <div key={optionIndex} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                              <input
+                                type="text"
+                                value={option}
+                                onChange={event => updateEditOption(question.id, optionIndex, event.target.value)}
+                                style={inputStyle}
+                                placeholder={`Option ${optionIndex + 1}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => updateEditQuestion(question.id, { options: question.options.filter((_, index) => index !== optionIndex) })}
+                                className="btn-outline"
+                                style={{ color: '#DC2626', borderColor: '#FCA5A5', padding: '0.4rem 0.7rem' }}
+                                aria-label={`Remove option ${optionIndex + 1}`}
+                              >×</button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => updateEditQuestion(question.id, { options: [...question.options, `Option ${question.options.length + 1}`] })}
+                            className="btn-outline"
+                            style={{ fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
+                          >+ Add Answer</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div>
@@ -505,8 +642,8 @@ export default function SurveyDetailPage({ params }) {
                 <tbody>
                   {qrCodes.map(qr => {
                     const key = qr.qr_code_key || qr.qrCodeKey || '';
-                    const scans = qr.scan_count || qr.scanCount || 0;
-                    const conversions = qr.conversion_count || qr.conversionCount || 0;
+                    const scans = qr.stats?.totalScans ?? qr.scan_count ?? qr.scanCount ?? 0;
+                    const conversions = qr.stats?.conversions ?? qr.conversion_count ?? qr.conversionCount ?? 0;
                     const isActive = qr.is_active !== 0 && qr.isActive !== false;
                     return (
                       <tr key={key}>
@@ -524,7 +661,7 @@ export default function SurveyDetailPage({ params }) {
                           <span
                             style={{ color: '#E67E22', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, marginRight: '0.75rem' }}
                             onClick={() => {
-                              const url = `${window.location.origin}/survey?qr=${key}`;
+                              const url = getSurveyQrUrl(qr, key);
                               navigator.clipboard.writeText(url);
                               setSuccess('QR URL copied to clipboard!');
                               setTimeout(() => setSuccess(''), 2000);
@@ -533,10 +670,16 @@ export default function SurveyDetailPage({ params }) {
                             Copy URL
                           </span>
                           <span
-                            style={{ color: '#E67E22', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500 }}
+                            style={{ color: '#E67E22', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, marginRight: '0.75rem' }}
                             onClick={() => window.open(`/api/qr-codes/download?qrCodeKey=${key}&format=png&size=400&download=true`, '_blank')}
                           >
                             Download
+                          </span>
+                          <span
+                            style={{ color: '#DC2626', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+                            onClick={() => handleDeleteQrCode(key)}
+                          >
+                            Delete
                           </span>
                         </td>
                       </tr>

@@ -3,7 +3,6 @@
 import { useMemo, useState } from 'react';
 import DataTable from '@/components/DataTable';
 import { computeTrendData, processReportData, validateTrendConfig } from '@/lib/report-engine';
-import { derivePreviewAttributes } from '@/lib/report-preview';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell,
@@ -12,22 +11,22 @@ import {
 const COLORS = ['#C0392B', '#E67E22', '#F39C12', '#27AE60', '#2980B9'];
 
 export default function StepPreview({ reportConfig, tableData, onGenerate, isSubmitting }) {
-  const selectedAttributes = reportConfig.selectedInitiative?.attributes;
   const selectedInitiativeId = reportConfig.selectedInitiative?.id;
-  const rawTrendConfig = reportConfig.trendConfig;
+  const questionSelections = useMemo(
+    () => reportConfig.questionSelections || [],
+    [reportConfig.questionSelections]
+  );
   const reportName = reportConfig.reportName;
 
   const [viewMode, setViewMode] = useState('table');
-  const previewAttributes = useMemo(
-    () => derivePreviewAttributes(selectedAttributes || [], tableData || []),
-    [selectedAttributes, tableData]
-  );
+  const previewAttributes = useMemo(() => {
+    const columns = tableData?.[0] ? Object.keys(tableData[0]) : [];
+    return questionSelections.map((selection) => selection.label).filter((label) => columns.includes(label));
+  }, [questionSelections, tableData]);
 
   // Run the full pipeline client-side for preview
   const { filteredData, metrics, trendData, explainability } = useMemo(() => {
     const attributes = previewAttributes;
-    const trendConfig = rawTrendConfig || { variables: [], enabledCalc: true, enabledDisplay: true };
-
     if (!tableData || tableData.length === 0) {
       return {
         filteredData: [],
@@ -49,17 +48,19 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
       reportConfig.sorts || [],
       attributes
     );
-    const trendValidation = validateTrendConfig(trendConfig, attributes);
     return {
       ...processed,
-      trendData: trendValidation.valid
-        ? computeTrendData(processed.filteredData, trendValidation.normalized, {
-          initiativeId: selectedInitiativeId,
-          reportName,
-        })
-        : [],
+      trendData: questionSelections.flatMap((selection) => {
+        const trendValidation = validateTrendConfig({
+          variables: [selection.label], enabledCalc: true, enabledDisplay: true,
+          method: selection.method, thresholdPct: 2,
+        }, attributes);
+        return trendValidation.valid
+          ? computeTrendData(processed.filteredData, trendValidation.normalized, { initiativeId: selectedInitiativeId, reportName })
+          : [];
+      }),
     };
-  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, rawTrendConfig, selectedInitiativeId, reportName]);
+  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, questionSelections, selectedInitiativeId, reportName]);
 
   // Build human-readable config summary
   const activeFilterEntries = Object.entries(reportConfig.filters || {}).filter(([, v]) => v && v !== 'All');
@@ -135,6 +136,12 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
               <p style={{ margin: '0.15rem 0 0 0' }}>{reportConfig.description}</p>
             </div>
           )}
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Questions</span>
+            <p style={{ margin: '0.15rem 0 0 0' }}>
+              {questionSelections.map((selection) => selection.label).join(', ') || '—'}
+            </p>
+          </div>
           {activeFilterEntries.length > 0 && (
             <div style={{ gridColumn: '1 / -1' }}>
               <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Filters</span>
@@ -245,14 +252,22 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
               {trendData.map((trend) => (
                 <div key={trend.trendId} style={{ fontSize: '0.88rem', lineHeight: 1.5 }}>
                   <p style={{ margin: '0 0 0.4rem 0' }}>
-                    <strong>Variables:</strong> {trend.attributes.join(', ')}
+                    <strong>Question:</strong> {trend.attributes.join(', ')}
                   </p>
-                  <p style={{ margin: '0 0 0.4rem 0' }}>
-                    <strong>Direction:</strong> {trend.direction} ({trend.magnitude}%)
-                  </p>
-                  <p style={{ margin: '0 0 0.4rem 0' }}>
-                    <strong>Confidence:</strong> {trend.confidenceScore}%
-                  </p>
+                  {trend.analysisType ? (
+                    <p style={{ margin: '0 0 0.4rem 0' }}>
+                      <strong>{trend.analysisLabel}:</strong> {trend.result ?? 'No result'}
+                    </p>
+                  ) : (
+                    <>
+                      <p style={{ margin: '0 0 0.4rem 0' }}>
+                        <strong>Direction:</strong> {trend.direction} ({trend.magnitude}%)
+                      </p>
+                      <p style={{ margin: '0 0 0.4rem 0' }}>
+                        <strong>Confidence:</strong> {trend.confidenceScore}%
+                      </p>
+                    </>
+                  )}
                   <p style={{ margin: 0 }}>
                     {trend.description}
                   </p>

@@ -50,7 +50,7 @@ describe('/api/qr-codes/scan integration', () => {
     expect((await POST(missingReq)).status).toBe(404);
   });
 
-  test('POST records scan and publishes event', async () => {
+  test('POST increments aggregate view and conversion counters without storing user data', async () => {
     insertQrCode(state.db, { qrCodeKey: 'qr_success_1', targetUrl: 'http://localhost:3000/survey/123' });
 
     const req = new Request('http://localhost:3000/api/qr-codes/scan', {
@@ -61,7 +61,7 @@ describe('/api/qr-codes/scan integration', () => {
         'user-agent': 'vitest-agent',
         referer: 'http://localhost:3000/start',
       },
-      body: JSON.stringify({ qrCodeKey: 'qr_success_1', convertedToSubmission: true }),
+      body: JSON.stringify({ qrCodeKey: 'qr_success_1' }),
     });
 
     const res = await POST(req);
@@ -72,8 +72,18 @@ describe('/api/qr-codes/scan integration', () => {
     expect(payload.qrCode.targetUrl).toBe('http://localhost:3000/survey/123');
     expect(state.publishMock).toHaveBeenCalledTimes(1);
 
-    const scans = state.db.prepare('SELECT COUNT(*) AS c FROM qr_scans WHERE converted_to_submission = 1').get().c;
-    expect(scans).toBe(1);
+    const conversionReq = new Request('http://localhost:3000/api/qr-codes/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qrCodeKey: 'qr_success_1', convertedToSubmission: true }),
+    });
+    expect((await POST(conversionReq)).status).toBe(200);
+
+    const counters = state.db.prepare(
+      'SELECT qr_viewcount, qr_conversion FROM qr_codes WHERE qr_code_key = ?'
+    ).get('qr_success_1');
+    expect(counters).toEqual({ qr_viewcount: 1, qr_conversion: 1 });
+    expect(state.publishMock).toHaveBeenCalledTimes(2);
   });
 
   test('GET requires auth and returns analytics when authorized', async () => {
@@ -82,12 +92,10 @@ describe('/api/qr-codes/scan integration', () => {
     const noAuthRes = await GET(new Request('http://localhost:3000/api/qr-codes/scan?qrCodeKey=qr_unauth'));
     expect(noAuthRes.status).toBe(401);
 
-    const qrCodeId = insertQrCode(state.db, { qrCodeKey: 'qr_stats_1' });
-    state.db.prepare(`
-      INSERT INTO qr_scans (qr_code_id, ip_address, user_agent, referrer, converted_to_submission, scanned_at)
-      VALUES (?, '1.1.1.1', 'ua1', NULL, 1, datetime('now', '-1 day')),
-             (?, '2.2.2.2', 'ua2', NULL, 0, datetime('now'))
-    `).run(qrCodeId, qrCodeId);
+    insertQrCode(state.db, { qrCodeKey: 'qr_stats_1' });
+    state.db.prepare(
+      'UPDATE qr_codes SET qr_viewcount = 2, qr_conversion = 1 WHERE qr_code_key = ?'
+    ).run('qr_stats_1');
 
     const tokens = createSessionForRank(state.db, { rank: 50 });
 
@@ -98,7 +106,7 @@ describe('/api/qr-codes/scan integration', () => {
 
     expect(res.status).toBe(200);
     expect(payload.stats.totalScans).toBe(2);
-    expect(payload.stats.uniqueIPs).toBe(2);
+    expect(payload.stats).not.toHaveProperty('uniqueIPs');
     expect(payload.stats.conversions).toBe(1);
   });
 });

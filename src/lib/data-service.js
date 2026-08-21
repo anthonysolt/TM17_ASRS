@@ -29,6 +29,13 @@ export async function getReportData(initiativeId) {
   return response.json();
 }
 
+export async function getReportQuestions(initiativeId) {
+  const response = await fetch(`/api/initiatives/${initiativeId}/report-questions`);
+  if (!response.ok) return [];
+  const data = await response.json();
+  return Array.isArray(data.questions) ? data.questions : [];
+}
+
 /**
  * getTrendData(initiativeId)
  * Returns the trend analysis data for one specific initiative.

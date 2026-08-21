@@ -19,6 +19,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { getReportFilterOptions } from '@/lib/report-view-filters';
 
 // Maximum number of filters allowed at once (per REP001/REP020)
 const MAX_FILTERS = 7;
@@ -30,18 +31,7 @@ export default function FilterPanel({ attributes, activeFilters, onFiltersChange
    * has values "6th", "7th", "8th", the dropdown shows those three options.
    */
   const attributeOptions = useMemo(() => {
-    const options = {};
-    attributes.forEach(attr => {
-      const key = attr.charAt(0).toLowerCase() + attr.slice(1).replace(/\s/g, '');
-      const uniqueValues = [...new Set(
-        tableData.map(row => {
-          const rowKey = Object.keys(row).find(k => k.toLowerCase() === key.toLowerCase());
-          return rowKey ? String(row[rowKey]) : null;
-        }).filter(Boolean)
-      )];
-      options[attr] = uniqueValues;
-    });
-    return options;
+    return getReportFilterOptions(tableData || [], attributes || []);
   }, [attributes, tableData]);
 
   // Count how many filters are actively applied (not set to "All")

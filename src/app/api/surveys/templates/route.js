@@ -6,8 +6,10 @@ import { logAudit } from '@/lib/audit';
 // DB CHECK constraint: field_type IN ('text','number','date','boolean','select','multiselect','rating','json','choice','yesno')
 const UI_TO_DB_TYPE = {
   textarea: 'text',
+  select: 'text',
+  choice: 'text',
   checkbox: 'boolean',
-  radio: 'choice',
+  radio: 'text',
   email: 'text',
   url: 'text',
 };
@@ -30,27 +32,26 @@ export async function GET() {
 
   // For each form, get questions
   const getQuestions = db.prepare(`
-    SELECT ff.form_field_id, f.field_id, f.field_label, f.field_type,
-           ff.required, ff.help_text, f.scope, f.initiative_id,
-           f.validation_rules AS field_rules, ff.validation_rules AS form_field_rules
-    FROM form_field ff
-    JOIN field f ON ff.field_id = f.field_id
-    WHERE ff.form_id = ?
-    ORDER BY ff.display_order
+    SELECT fq.form_question_id, f.field_id, f.field_label, f.field_type,
+           fq.required, fq.help_text, f.scope, f.initiative_id,
+           f.validation_rules AS field_rules, fq.validation_rules AS form_question_rules
+    FROM form_questions fq
+    JOIN field f ON fq.field_id = f.field_id
+    WHERE fq.form_id = ?
+    ORDER BY fq.display_order
   `);
   const getOptions = db.prepare(`
     SELECT option_value, display_label FROM field_options WHERE field_id = ? ORDER BY display_order`);
 
   const surveys = forms.map(form => {
     const questions = getQuestions.all(form.id).map(q => {
-      const isOptionType = q.field_type === 'select' || q.field_type === 'multiselect' || q.field_type === 'choice';
-      const isYesNo = q.field_type === 'yesno';
+      const rules = resolveRules(q.field_rules, q.form_question_rules);
+      const displayType = (rules && rules.ui_type) || q.field_type;
+      const isOptionType = ['select', 'radio', 'checkbox', 'choice', 'multiselect'].includes(displayType);
+      const isYesNo = displayType === 'yesno';
       const rawOptions = (isOptionType || isYesNo)
         ? getOptions.all(q.field_id).map(opt => opt.option_value)
         : undefined;
-      const rules = resolveRules(q.field_rules, q.form_field_rules);
-      // Prefer ui_type from validation_rules (original UI type), fall back to DB field_type
-      const displayType = (rules && rules.ui_type) || q.field_type;
       return {
         id: q.field_id,
         text: {
@@ -90,6 +91,15 @@ export async function POST(request) {
     if (!title || !Array.isArray(questions)) {
       return new Response(JSON.stringify({ error: "Invalid payload" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
+    const hasConflictingClassification = questions.some(q => {
+      const question = typeof q === 'object' && q.text ? q.text : q;
+      return question?.is_core_question && question?.is_initiative_specific;
+    });
+    if (hasConflictingClassification) {
+      return new Response(JSON.stringify({ error: 'A question cannot be both a core question and an initiative question' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     // Prepare all statements
     const now = new Date().toISOString();
@@ -98,11 +108,12 @@ export async function POST(request) {
       VALUES (?, ?, ?, ?, ?, NULL, 1)
     `);
     const insertField = db.prepare(`
-      INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable, is_required_default, validation_rules)
-      VALUES (?, ?, ?, ?, ?, 0, 0, ?)
+      INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable,
+                         is_required_default, is_core_question, is_initiative_specific, validation_rules)
+      VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
     `);
-    const insertFormField = db.prepare(`
-      INSERT INTO form_field (form_id, field_id, display_order, required, is_hidden, help_text, validation_rules)
+    const insertFormQuestion = db.prepare(`
+      INSERT INTO form_questions (form_id, field_id, display_order, required, is_hidden, help_text, validation_rules)
       VALUES (?, ?, ?, ?, 0, ?, ?)
     `);
     const insertOption = db.prepare(`
@@ -133,9 +144,13 @@ export async function POST(request) {
           dbFieldType = UI_TO_DB_TYPE[uiFieldType] || uiFieldType;
         }
         const required = textObj.required ? 1 : 0;
-        const helpText = textObj.help_text || null;
-        const scope = textObj.scope || 'common';
-        const fieldInitiativeId = scope === 'initiative_specific' ? effectiveInitiativeId : null;
+        const isCoreQuestion = textObj.is_core_question ? 1 : 0;
+        const isInitiativeSpecific = textObj.is_initiative_specific ? 1 : 0;
+        if (isCoreQuestion && isInitiativeSpecific) {
+          throw new Error('A question cannot be both a core question and an initiative question');
+        }
+        const scope = isCoreQuestion ? 'common' : (isInitiativeSpecific ? 'initiative_specific' : (textObj.scope || 'common'));
+        const fieldInitiativeId = isInitiativeSpecific || scope === 'initiative_specific' ? effectiveInitiativeId : null;
 
         // Merge ui_type into validation_rules so the renderer knows the original display type
         const baseRules = textObj.validation_rules || {};
@@ -153,11 +168,14 @@ export async function POST(request) {
         }
         if (!fieldId) {
           // Insert field with the DB-safe type
-          const fieldResult = insertField.run(fieldKey, fieldLabel, dbFieldType, scope, fieldInitiativeId, rulesJson);
+          const fieldResult = insertField.run(
+            fieldKey, fieldLabel, dbFieldType, scope, fieldInitiativeId,
+            isCoreQuestion, isInitiativeSpecific, rulesJson
+          );
           fieldId = fieldResult.lastInsertRowid;
 
-          // Insert options for select/choice/multiselect types (use dbFieldType for the check since radio maps to choice)
-          if ((dbFieldType === 'select' || dbFieldType === 'choice' || dbFieldType === 'multiselect') && Array.isArray(textObj.options)) {
+          // Options remain attached even when the answer value is stored as text.
+          if (['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(uiFieldType) && Array.isArray(textObj.options)) {
             textObj.options.forEach((opt, idx) => {
               insertOption.run(fieldId, opt, opt, idx);
             });
@@ -171,8 +189,8 @@ export async function POST(request) {
           }
         }
 
-        // Insert form_field
-        insertFormField.run(formId, fieldId, displayOrder, required, helpText, formFieldRulesJson);
+        // Link the canonical question to this form without duplicating it.
+        insertFormQuestion.run(formId, fieldId, displayOrder, required, null, formFieldRulesJson);
 
         questionObjs.push({
           id: fieldId,
@@ -180,9 +198,10 @@ export async function POST(request) {
             question: fieldLabel,
             type: uiFieldType,
             required: !!required,
-            ...((dbFieldType === 'select' || dbFieldType === 'choice' || dbFieldType === 'multiselect') && textObj.options ? { options: textObj.options } : {}),
+            ...(['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(uiFieldType) && textObj.options ? { options: textObj.options } : {}),
             ...(dbFieldType === 'yesno' && textObj.subQuestions ? { subQuestions: textObj.subQuestions } : {}),
-            ...(helpText ? { help_text: helpText } : {})
+            is_core_question: !!isCoreQuestion,
+            is_initiative_specific: !!isInitiativeSpecific
           }
         });
         displayOrder++;
@@ -203,9 +222,9 @@ export async function POST(request) {
     const newSurvey = createSurvey();
 
     logAudit(db, {
-      event: 'survey.created',
+      event: 'form.created',
       userEmail: auth.user.email,
-      targetType: 'survey',
+      targetType: 'form',
       targetId: String(newSurvey.id),
       payload: { title, questionCount: questions.length },
     });
@@ -235,15 +254,28 @@ export async function DELETE(request) {
     // Get template name before deleting for audit log
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
-    const tableExists = (tableName) =>
-      !!db.prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?').get(tableName);
+    const tableExists = (tableName) => {
+      try {
+        return !!db.prepare(
+          'SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?'
+        ).get(tableName);
+      } catch {
+        // The integration harness uses SQLite while production uses PostgreSQL.
+        return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
+      }
+    };
 
     const deleteTx = db.transaction((id) => {
       const quoteSurveyIds = tableExists('surveys')
-        ? db
-            .prepare(`SELECT id FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`)
-            .all(id)
-            .map((r) => r.id)
+        ? db.prepare('SELECT id, responses FROM surveys').all()
+            .filter((survey) => {
+              try {
+                return Number(JSON.parse(survey.responses)?.templateId) === Number(id);
+              } catch {
+                return false;
+              }
+            })
+            .map((survey) => survey.id)
         : [];
 
       if (quoteSurveyIds.length && tableExists('reports')) {
@@ -252,11 +284,18 @@ export async function DELETE(request) {
       }
 
       if (tableExists('surveys')) {
-        db.prepare(`DELETE FROM surveys WHERE responses::jsonb ->> 'templateId' = ?`).run(String(id));
+        const deleteSurvey = db.prepare('DELETE FROM surveys WHERE id = ?');
+        quoteSurveyIds.forEach((surveyId) => deleteSurvey.run(surveyId));
       }
 
       if (tableExists('survey_distribution')) {
         db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
+      }
+
+      if (tableExists('submission')) {
+        // submission_value rows cascade from submission; form_questions can
+        // then cascade safely when the form is removed.
+        db.prepare('DELETE FROM submission WHERE form_id = ?').run(id);
       }
 
       if (tableExists('form')) {
@@ -267,9 +306,9 @@ export async function DELETE(request) {
     deleteTx(templateId);
 
     logAudit(db, {
-      event: 'survey.deleted',
+      event: 'form.deleted',
       userEmail: auth.user.email,
-      targetType: 'survey',
+      targetType: 'form',
       targetId: String(templateId),
       payload: { title: existing?.form_name },
     });

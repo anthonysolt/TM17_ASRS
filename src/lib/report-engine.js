@@ -224,8 +224,13 @@ export function processReportData(tableData, filters, expressions, sortConfig, a
 }
 
 function getRowKeyByAttribute(row, attribute) {
+  if (Object.prototype.hasOwnProperty.call(row, attribute)) return attribute;
   const key = toCamelKey(attribute);
-  return Object.keys(row).find((k) => k.toLowerCase() === key.toLowerCase()) || null;
+  const normalizedAttribute = String(attribute).replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return Object.keys(row).find((k) =>
+    k.toLowerCase() === key.toLowerCase()
+    || k.replace(/[^a-z0-9]/gi, '').toLowerCase() === normalizedAttribute
+  ) || null;
 }
 
 function toNumberIfPossible(value) {
@@ -350,7 +355,8 @@ export function validateTrendConfig(trendConfig, availableAttributes = []) {
   const source = trendConfig || {};
   const enabledCalc = source.enabledCalc !== false;
   const enabledDisplay = source.enabledDisplay !== false;
-  const method = ['delta_halves', 'linear_slope'].includes(source.method) ? source.method : 'delta_halves';
+  const supportedMethods = ['delta_halves', 'linear_slope', 'most_popular', 'average', 'least_common'];
+  const method = supportedMethods.includes(source.method) ? source.method : 'delta_halves';
   const thresholdPct = Number.isFinite(Number(source.thresholdPct))
     ? Math.max(0, Math.min(100, Number(source.thresholdPct)))
     : 2;
@@ -435,12 +441,80 @@ function computeConfidenceScore(rowCount, skipped, totalVars) {
   return Math.round((coverage * 70 + sampleFactor * 30) * 100) / 100;
 }
 
+const AGGREGATE_METHOD_LABELS = {
+  most_popular: 'Most Popular Answer',
+  average: 'Average Answer',
+  least_common: 'Least Common Answer',
+};
+
+function computeAggregateAnalysis(rows, attributes, trendConfig, context) {
+  return attributes.map((attribute) => {
+    const values = rows.map((row) => {
+      const key = getRowKeyByAttribute(row, attribute);
+      return key ? row[key] : null;
+    });
+    const base = {
+      trendId: createDeterministicTrendId(context, [attribute], trendConfig.method, rows),
+      analysisType: trendConfig.method,
+      analysisLabel: AGGREGATE_METHOD_LABELS[trendConfig.method],
+      attributes: [attribute],
+      enabledDisplay: trendConfig.enabledDisplay !== false,
+      enabledCalc: true,
+    };
+
+    if (trendConfig.method === 'average') {
+      const numericValues = values.map(toNumberIfPossible).filter((value) => value !== null);
+      const rawAverage = average(numericValues);
+      const result = rawAverage === null ? null : Math.round(rawAverage * 100) / 100;
+      return {
+        ...base,
+        result,
+        responsesEvaluated: numericValues.length,
+        description: result === null
+          ? 'No numeric answers are available to calculate an average.'
+          : `Average answer: ${result} across ${numericValues.length} numeric response${numericValues.length === 1 ? '' : 's'}.`,
+      };
+    }
+
+    const counts = new Map();
+    values.forEach((value) => {
+      if (value === null || value === undefined || String(value).trim() === '') return;
+      const displayValue = String(value).trim();
+      const normalizedValue = displayValue.toLowerCase();
+      const existing = counts.get(normalizedValue);
+      counts.set(normalizedValue, existing
+        ? { ...existing, count: existing.count + 1 }
+        : { displayValue, count: 1 });
+    });
+    const responsesEvaluated = [...counts.values()].reduce((sum, item) => sum + item.count, 0);
+    const ranked = [...counts.values()].sort((a, b) =>
+      trendConfig.method === 'most_popular' ? b.count - a.count : a.count - b.count
+    );
+    const selected = ranked[0] || null;
+    const resultLabel = trendConfig.method === 'most_popular' ? 'Most popular answer' : 'Least common answer';
+
+    return {
+      ...base,
+      result: selected?.displayValue ?? null,
+      answerCount: selected?.count ?? 0,
+      responsesEvaluated,
+      description: selected
+        ? `${resultLabel}: ${selected.displayValue} (${selected.count} of ${responsesEvaluated} responses).`
+        : `No answers are available to determine the ${resultLabel.toLowerCase()}.`,
+    };
+  });
+}
+
 export function computeTrendData(filteredData, trendConfig, context = {}) {
   if (!trendConfig || trendConfig.enabledCalc === false) return [];
 
   const rows = Array.isArray(filteredData) ? filteredData : [];
   const attributes = trendConfig.variables || [];
   if (attributes.length === 0) return [];
+
+  if (AGGREGATE_METHOD_LABELS[trendConfig.method]) {
+    return computeAggregateAnalysis(rows, attributes, trendConfig, context);
+  }
 
   if (rows.length < 4) {
     return [{

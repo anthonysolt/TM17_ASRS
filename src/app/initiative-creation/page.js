@@ -435,12 +435,6 @@ function InitiativeCreationContent() {
                         <td>
                           <span
                             style={{ color: '#E67E22', cursor: 'pointer', fontSize: 13, fontWeight: 500, marginRight: 12 }}
-                            onClick={() => router.push(`/initiatives/${initiative.id}/manage`)}
-                          >
-                            Manage
-                          </span>
-                          <span
-                            style={{ color: '#E67E22', cursor: 'pointer', fontSize: 13, fontWeight: 500, marginRight: 12 }}
                             onClick={() => router.push(`/initiatives/${initiative.id}/manage?tab=edit`)}
                           >
                             Edit

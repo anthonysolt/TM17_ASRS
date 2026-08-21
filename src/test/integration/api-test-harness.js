@@ -65,15 +65,15 @@ export function createTestDb() {
     CREATE TABLE submission_value (
       submission_value_id INTEGER PRIMARY KEY AUTOINCREMENT,
       submission_id INTEGER NOT NULL,
-      field_id INTEGER NOT NULL,
+      form_question_id INTEGER NOT NULL,
       value_text TEXT,
       value_number REAL,
       value_date TEXT,
       value_bool INTEGER,
       value_json TEXT,
-      UNIQUE(submission_id, field_id),
+      UNIQUE(submission_id, form_question_id),
       FOREIGN KEY (submission_id) REFERENCES submission(submission_id) ON DELETE CASCADE,
-      FOREIGN KEY (field_id) REFERENCES field(field_id)
+      FOREIGN KEY (form_question_id) REFERENCES form_questions(form_question_id)
     );
 
     CREATE TABLE initiative_goal (
@@ -131,11 +131,15 @@ export function createTestDb() {
       initiative_id INTEGER,
       is_filterable INTEGER NOT NULL DEFAULT 0,
       is_required_default INTEGER NOT NULL DEFAULT 0,
-      validation_rules TEXT
+      is_core_question INTEGER NOT NULL DEFAULT 0 CHECK (is_core_question IN (0, 1)),
+      is_initiative_specific INTEGER NOT NULL DEFAULT 0 CHECK (is_initiative_specific IN (0, 1)),
+      validation_rules TEXT,
+      CHECK (is_core_question + is_initiative_specific <= 1),
+      CHECK (is_initiative_specific = 0 OR initiative_id IS NOT NULL)
     );
 
-    CREATE TABLE form_field (
-      form_field_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE TABLE form_questions (
+      form_question_id INTEGER PRIMARY KEY AUTOINCREMENT,
       form_id INTEGER NOT NULL,
       field_id INTEGER NOT NULL,
       display_order INTEGER NOT NULL DEFAULT 0,
@@ -197,18 +201,9 @@ export function createTestDb() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       created_by_user_id INTEGER,
       is_active INTEGER NOT NULL DEFAULT 1,
-      expires_at TEXT
-    );
-
-    CREATE TABLE qr_scans (
-      scan_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      qr_code_id INTEGER NOT NULL,
-      scanned_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      ip_address TEXT,
-      user_agent TEXT,
-      referrer TEXT,
-      converted_to_submission INTEGER,
-      FOREIGN KEY (qr_code_id) REFERENCES qr_codes(qr_code_id) ON DELETE CASCADE
+      expires_at TEXT,
+      qr_viewcount INTEGER NOT NULL DEFAULT 0,
+      qr_conversion INTEGER NOT NULL DEFAULT 0
     );
   `);
 

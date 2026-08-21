@@ -32,7 +32,8 @@ export async function GET(request, { params }) {
       SELECT AVG(sv.value_number) as avg_score
       FROM submission_value sv
       JOIN submission s ON s.submission_id = sv.submission_id
-      JOIN field f ON f.field_id = sv.field_id
+      JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+      JOIN field f ON f.field_id = fq.field_id
       WHERE s.initiative_id = ? AND f.field_type = 'rating' AND sv.value_number IS NOT NULL
     `).get(initiativeId);
 
@@ -54,22 +55,23 @@ export async function GET(request, { params }) {
     const chartFields = db.prepare(`
       SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
       FROM field f
-      JOIN form_field ff ON ff.field_id = f.field_id
-      JOIN form fm ON fm.form_id = ff.form_id
+      JOIN form_questions fq ON fq.field_id = f.field_id
+      JOIN form fm ON fm.form_id = fq.form_id
       WHERE fm.initiative_id = ?
     `).all(initiativeId);
 
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
     for (const field of chartFields) {
-      const key = field.field_key || field.field_label;
+      const key = field.field_label || field.field_key;
 
       if (['select', 'choice', 'multiselect', 'yesno', 'boolean'].includes(field.field_type)) {
         const distribution = db.prepare(`
           SELECT sv.value_text as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_text IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -81,7 +83,8 @@ export async function GET(request, { params }) {
           SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_number IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -96,7 +99,8 @@ export async function GET(request, { params }) {
           SELECT sv.value_text as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_text IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -108,7 +112,8 @@ export async function GET(request, { params }) {
           SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_number IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);

@@ -12,7 +12,8 @@ export async function GET(request) {
 
     const fields = db.prepare(`
       SELECT f.field_id, f.field_key, f.field_label, f.field_type, f.scope,
-             f.initiative_id, f.is_filterable, f.is_required_default, f.validation_rules,
+             f.initiative_id, f.is_filterable, f.is_required_default,
+             f.is_core_question, f.is_initiative_specific, f.validation_rules,
              i.initiative_name
       FROM field f
       LEFT JOIN initiative i ON f.initiative_id = i.initiative_id
@@ -32,6 +33,7 @@ export async function GET(request) {
         ...field,
         validation_rules: field.validation_rules ? (() => { try { return JSON.parse(field.validation_rules); } catch { return field.validation_rules; } })() : null,
         field_options: options,
+        options: options.map(option => option.option_value),
       };
     });
 
@@ -60,7 +62,20 @@ export async function POST(request) {
     if (auth.error) return auth.error;
 
     const body = await request.json();
-    const { field_key, field_label, field_type, scope, initiative_id, options, validation_rules, is_filterable } = body || {};
+    const { field_key, field_label, field_type, scope, initiative_id, options, validation_rules, is_filterable,
+      is_core_question, is_initiative_specific } = body || {};
+
+    if (is_core_question && is_initiative_specific) {
+      return new Response(JSON.stringify({ error: 'A question cannot be both a core question and an initiative question' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (is_initiative_specific && !initiative_id) {
+      return new Response(JSON.stringify({ error: 'initiative_id is required for an initiative question' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!field_key || !field_label || !field_type || !scope) {
       return new Response(JSON.stringify({ error: 'Missing required fields: field_key, field_label, field_type, scope' }), {
@@ -102,8 +117,9 @@ export async function POST(request) {
 
     const createField = db.transaction(() => {
       const result = db.prepare(`
-        INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable, validation_rules)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_filterable,
+                           is_core_question, is_initiative_specific, validation_rules)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         field_key,
         field_label,
@@ -111,6 +127,8 @@ export async function POST(request) {
         scope,
         initiative_id ?? null,
         is_filterable ? 1 : 0,
+        is_core_question ? 1 : 0,
+        is_initiative_specific ? 1 : 0,
         validationRulesStr,
       );
 
@@ -191,7 +209,25 @@ export async function PUT(request) {
     }
 
     const body = await request.json();
-    const { field_label, field_type, scope, initiative_id, is_filterable, validation_rules, options } = body || {};
+    const { field_label, field_type, scope, initiative_id, is_filterable, validation_rules, options,
+      is_core_question, is_initiative_specific } = body || {};
+
+    const effectiveCore = is_core_question === undefined ? existing.is_core_question : (is_core_question ? 1 : 0);
+    const effectiveInitiativeQuestion = is_initiative_specific === undefined
+      ? existing.is_initiative_specific
+      : (is_initiative_specific ? 1 : 0);
+    if (effectiveCore && effectiveInitiativeQuestion) {
+      return new Response(JSON.stringify({ error: 'A question cannot be both a core question and an initiative question' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const effectiveInitiativeId = initiative_id === undefined ? existing.initiative_id : initiative_id;
+    if (effectiveInitiativeQuestion && !effectiveInitiativeId) {
+      return new Response(JSON.stringify({ error: 'initiative_id is required for an initiative question' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     if (field_type && !VALID_TYPES.includes(field_type)) {
       return new Response(JSON.stringify({ error: `Invalid field_type. Must be one of: ${VALID_TYPES.join(', ')}` }), {
@@ -221,6 +257,8 @@ export async function PUT(request) {
     if (scope !== undefined) updates.scope = scope;
     if (initiative_id !== undefined) updates.initiative_id = initiative_id;
     if (is_filterable !== undefined) updates.is_filterable = is_filterable ? 1 : 0;
+    if (is_core_question !== undefined) updates.is_core_question = is_core_question ? 1 : 0;
+    if (is_initiative_specific !== undefined) updates.is_initiative_specific = is_initiative_specific ? 1 : 0;
     if (validation_rules !== undefined) updates.validation_rules = JSON.stringify(validation_rules);
 
     const updateField = db.transaction(() => {
@@ -280,6 +318,57 @@ export async function PUT(request) {
   }
 }
 
+export async function PATCH(request) {
+  try {
+    const auth = requirePermission(request, db, 'forms.create');
+    if (auth.error) return auth.error;
+
+    const url = new URL(request.url);
+    const fieldId = Number(url.searchParams.get('fieldId'));
+    if (!Number.isInteger(fieldId) || fieldId <= 0) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid fieldId' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const existing = db.prepare(
+      'SELECT field_id, field_label FROM field WHERE field_id = ?'
+    ).get(fieldId);
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Field not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    db.prepare(`
+      UPDATE field
+      SET is_core_question = 0, is_initiative_specific = 0
+      WHERE field_id = ?
+    `).run(fieldId);
+
+    logAudit(db, {
+      event: 'field.classification_removed',
+      userEmail: auth.user?.email,
+      targetType: 'field',
+      targetId: String(fieldId),
+      payload: { field_label: existing.field_label },
+    });
+
+    return new Response(JSON.stringify({ success: true, fieldId }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (err) {
+    console.error('[admin/fields PATCH] Error:', err);
+    return new Response(JSON.stringify({ error: err.message || String(err) }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
 export async function DELETE(request) {
   try {
     const auth = requirePermission(request, db, 'users.manage');
@@ -303,7 +392,7 @@ export async function DELETE(request) {
       });
     }
 
-    const usageCount = db.prepare('SELECT COUNT(*) AS c FROM form_field WHERE field_id = ?').get(fieldId).c;
+    const usageCount = db.prepare('SELECT COUNT(*) AS c FROM form_questions WHERE field_id = ?').get(fieldId).c;
     if (usageCount > 0) {
       return new Response(JSON.stringify({ error: 'Field is in use', usageCount }), {
         status: 409,

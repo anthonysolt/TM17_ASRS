@@ -32,36 +32,15 @@ describe('/api/notifications GET', () => {
     vi.useRealTimers();
   });
 
-  test('returns only active surveys and published reports for public users', async () => {
+  test('returns only whitelisted audit activity', async () => {
     prepareMock.mockImplementation((sql) => {
-      if (sql.includes('FROM survey_distribution')) {
+      if (sql.includes('FROM audit_log')) {
         return {
           all: () => [
-            {
-              distribution_id: 7,
-              title: 'Spring Student Voice Survey',
-              initiative_name: 'E-Gaming and Careers',
-              created_at: '2026-04-11T10:00:00.000Z',
-              start_date: '2026-04-10',
-              end_date: '2026-04-20',
-              status: 'active',
-            },
+            { audit_id: 7, event: 'form.created', payload: '{"title":"Spring Survey"}', created_at: '2026-04-11T10:00:00.000Z' },
+            { audit_id: 8, event: 'report.deleted', payload: '{"name":"Old Report"}', created_at: '2026-04-11T09:00:00.000Z' },
           ],
         };
-      }
-      if (sql.includes('FROM reports')) {
-        return {
-          all: () => [
-            { id: 2, name: 'Published Report', status: 'published', created_at: '2026-04-11T09:00:00.000Z' },
-            { id: 3, name: 'Draft Report', status: 'draft', created_at: '2026-04-11T11:00:00.000Z' },
-          ],
-        };
-      }
-      if (sql.includes('FROM surveys')) {
-        return { all: () => [{ id: 1, name: 'Submission', email: 'x@test.com', submitted_at: '2026-04-11T12:00:00.000Z' }] };
-      }
-      if (sql.includes('FROM initiative')) {
-        return { all: () => [{ initiative_id: 9, initiative_name: 'Should Not Show' }] };
       }
       throw new Error(`Unexpected SQL: ${sql}`);
     });
@@ -71,8 +50,8 @@ describe('/api/notifications GET', () => {
 
     expect(res.status).toBe(200);
     expect(data.notifications.map((notification) => notification.id)).toEqual([
-      'survey-distribution-7',
-      'report-2',
+      'activity-7',
+      'activity-8',
     ]);
   });
 });

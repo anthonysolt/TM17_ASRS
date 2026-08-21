@@ -19,53 +19,28 @@ const QUESTION_TYPE_DEFS = [
 ];
 
 // Pre-built required fields that are automatically included in every form.
-// These cannot be removed by the user.
 const REQUIRED_FIELDS = [
   {
-    field_id: 'required-full-name',
-    field_key: 'full_name',
-    field_label: 'Full Name',
+    field_id: 'required-first-name',
+    field_key: 'first_name',
+    field_label: 'First Name',
     field_type: 'text',
     scope: 'common',
     required: true,
     help_text: '',
-    validation_rules: { minLength: 2, maxLength: 100 },
+    validation_rules: { minLength: 1, maxLength: 100 },
     options: [],
     _locked: true,
   },
   {
-    field_id: 'required-email',
-    field_key: 'email',
-    field_label: 'Email Address',
-    field_type: 'email',
-    scope: 'common',
-    required: true,
-    help_text: '',
-    validation_rules: { pattern: 'email' },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-phone',
-    field_key: 'phone_number',
-    field_label: 'Phone Number',
-    field_type: 'text',
-    scope: 'common',
-    required: true,
-    help_text: 'e.g. (555) 123-4567',
-    validation_rules: { pattern: 'phone' },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-school',
-    field_key: 'school',
-    field_label: 'School',
+    field_id: 'required-last-name',
+    field_key: 'last_name',
+    field_label: 'Last Name',
     field_type: 'text',
     scope: 'common',
     required: true,
     help_text: '',
-    validation_rules: { minLength: 2, maxLength: 150 },
+    validation_rules: { minLength: 1, maxLength: 100 },
     options: [],
     _locked: true,
   },
@@ -82,6 +57,8 @@ export default function FormCreationPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [questionTab, setQuestionTab] = useState('types');
+  const [hoveredSavedQuestionId, setHoveredSavedQuestionId] = useState(null);
+  const [removingSavedQuestionId, setRemovingSavedQuestionId] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -106,15 +83,18 @@ export default function FormCreationPage() {
 
   const addField = (field) => {
     if (selectedFields.some(sf => sf.field_id === field.field_id)) return;
-    const needsOptions = ['select', 'radio', 'checkbox'].includes(field.field_type);
+    const displayType = field.validation_rules?.ui_type || field.field_type;
+    const needsOptions = ['select', 'radio', 'checkbox'].includes(displayType);
     setSelectedFields([...selectedFields, {
       field_id: field.field_id,
       field_key: field.field_key,
       field_label: field.field_label,
-      field_type: field.field_type,
+      field_type: displayType,
       scope: field.scope,
+      initiative_id: field.initiative_id,
       required: true,
-      help_text: '',
+      is_core_question: !!field.is_core_question,
+      is_initiative_specific: !!field.is_initiative_specific,
       validation_rules: null,
       options: needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
     }]);
@@ -140,6 +120,30 @@ export default function FormCreationPage() {
     if (newIndex < 0 || newIndex >= copy.length) return;
     [copy[index], copy[newIndex]] = [copy[newIndex], copy[index]];
     setSelectedFields(copy);
+  };
+
+  const removeSavedQuestion = async (field, event) => {
+    event.stopPropagation();
+    if (removingSavedQuestionId) return;
+    setRemovingSavedQuestionId(field.field_id);
+    try {
+      const response = await apiFetch(`/api/admin/fields?fieldId=${field.field_id}`, {
+        method: 'PATCH',
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Unable to remove question from the library');
+      }
+      setFieldCatalog(previous => ({
+        common: previous.common.map(item => item.field_id === field.field_id ? { ...item, is_core_question: 0, is_initiative_specific: 0 } : item),
+        initiative_specific: previous.initiative_specific.map(item => item.field_id === field.field_id ? { ...item, is_core_question: 0, is_initiative_specific: 0 } : item),
+        staff_only: previous.staff_only.map(item => item.field_id === field.field_id ? { ...item, is_core_question: 0, is_initiative_specific: 0 } : item),
+      }));
+    } catch (error) {
+      alert(error.message || 'Unable to remove question from the library');
+    } finally {
+      setRemovingSavedQuestionId(null);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -174,7 +178,8 @@ export default function FormCreationPage() {
             question: f.field_label,
             type: f.field_type,
             required: f.required,
-            help_text: f.help_text || undefined,
+            is_core_question: f.is_core_question === true,
+            is_initiative_specific: f.is_initiative_specific === true,
             scope: f.scope,
             form_validation_rules: f.validation_rules || undefined,
             ...(f.options && f.options.length > 0 ? { options: f.options } : {}),
@@ -449,12 +454,38 @@ export default function FormCreationPage() {
                       />
                       Required {sf._locked && '(locked)'}
                     </label>
-                    <input
-                      placeholder="Help text (optional)"
-                      value={sf.help_text}
-                      onChange={e => updateFieldConfig(sf.field_id, 'help_text', e.target.value)}
-                      style={{ flex: 1, minWidth: '140px', padding: '5px 8px', borderRadius: '6px', border: '1px solid #E5E7EB', fontSize: '12px', color: '#374151', outline: 'none' }}
-                    />
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: typeof sf.field_id === 'number' ? 'default' : 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={sf.is_core_question === true}
+                        disabled={typeof sf.field_id === 'number'}
+                        onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
+                          ...field,
+                          is_core_question: e.target.checked,
+                          is_initiative_specific: false,
+                          scope: 'common',
+                          initiative_id: null,
+                        } : field))}
+                        style={{ accentColor: '#E67E22' }}
+                      />
+                      Core question
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: typeof sf.field_id === 'number' ? 'default' : 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={sf.is_initiative_specific === true}
+                        disabled={typeof sf.field_id === 'number' || !selectedInitiative}
+                        onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
+                          ...field,
+                          is_initiative_specific: e.target.checked,
+                          is_core_question: false,
+                          scope: e.target.checked ? 'initiative_specific' : 'common',
+                          initiative_id: e.target.checked ? Number(selectedInitiative) : null,
+                        } : field))}
+                        style={{ accentColor: '#E67E22' }}
+                      />
+                      Initiative question
+                    </label>
                   </div>
                 </div>
 
@@ -585,25 +616,36 @@ export default function FormCreationPage() {
                   cursor: 'pointer',
                   marginBottom: '-1px',
                 }}
-              >Question Types</button>
+              >Create Question</button>
               <button
                 type="button"
-                onClick={() => setQuestionTab('saved')}
+                onClick={() => setQuestionTab('core')}
                 style={{
                   padding: '8px 16px',
                   fontSize: '13px',
                   fontWeight: 600,
-                  color: questionTab === 'saved' ? '#E67E22' : '#6B7280',
+                  color: questionTab === 'core' ? '#E67E22' : '#6B7280',
                   background: 'none',
                   border: 'none',
-                  borderBottom: questionTab === 'saved' ? '2px solid #E67E22' : '2px solid transparent',
+                  borderBottom: questionTab === 'core' ? '2px solid #E67E22' : '2px solid transparent',
                   cursor: 'pointer',
                   marginBottom: '-1px',
                 }}
-              >Saved Questions</button>
+              >Core Questions</button>
+              <button
+                type="button"
+                onClick={() => setQuestionTab('initiative')}
+                style={{
+                  padding: '8px 12px', fontSize: '13px', fontWeight: 600,
+                  color: questionTab === 'initiative' ? '#E67E22' : '#6B7280',
+                  background: 'none', border: 'none',
+                  borderBottom: questionTab === 'initiative' ? '2px solid #E67E22' : '2px solid transparent',
+                  cursor: 'pointer', marginBottom: '-1px',
+                }}
+              >Initiative Questions</button>
             </div>
 
-            {/* Question Types tab */}
+            {/* Create Question tab */}
             {questionTab === 'types' && (
               <>
                 <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '0 0 12px' }}>
@@ -615,24 +657,20 @@ export default function FormCreationPage() {
                       key={t.type}
                       type="button"
                       onClick={() => {
-                        const catalogField = availableFields.find(f => f.field_type === t.type);
-                        if (catalogField) {
-                          addField(catalogField);
-                        } else {
-                          const syntheticId = `synthetic-${t.type}-${Date.now()}`;
-                          const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type);
-                          setSelectedFields(prev => [...prev, {
-                            field_id: syntheticId,
-                            field_key: t.type,
-                            field_label: t.label,
-                            field_type: t.type,
-                            scope: 'common',
-                            required: true,
-                            help_text: '',
-                            validation_rules: null,
-                            options: needsOptions ? ['Option 1', 'Option 2'] : [],
-                          }]);
-                        }
+                        const syntheticId = `synthetic-${t.type}-${Date.now()}`;
+                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type);
+                        setSelectedFields(prev => [...prev, {
+                          field_id: syntheticId,
+                          field_key: t.type,
+                          field_label: t.label,
+                          field_type: t.type,
+                          scope: 'common',
+                          required: true,
+                          is_core_question: false,
+                          is_initiative_specific: false,
+                          validation_rules: null,
+                          options: needsOptions ? ['Option 1', 'Option 2'] : [],
+                        }]);
                       }}
                       style={{
                         padding: '10px 8px',
@@ -660,28 +698,34 @@ export default function FormCreationPage() {
               </>
             )}
 
-            {/* Saved Questions tab */}
-            {questionTab === 'saved' && (
+            {/* Core and initiative question libraries */}
+            {(questionTab === 'core' || questionTab === 'initiative') && (() => {
+              const isInitiativeTab = questionTab === 'initiative';
+              const libraryQuestions = availableFields.filter(field => isInitiativeTab
+                ? field.is_initiative_specific && field.initiative_id === Number(selectedInitiative)
+                : field.is_core_question
+              );
+              return (
               <>
-                {availableFields.length > 0 ? (
+                {libraryQuestions.length > 0 ? (
                   <>
                     <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '0 0 12px' }}>
-                      Pre-configured questions from your organization. Click to add.
+                      {isInitiativeTab
+                        ? 'Questions saved for the selected initiative. Click to add.'
+                        : 'Shared questions from your organization. Click to add.'}
                     </p>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {availableFields.map(f => {
+                      {libraryQuestions.map(f => {
                         const isAdded = selectedFields.some(sf => sf.field_id === f.field_id);
                         return (
-                          <button
+                          <div
                             key={f.field_id}
-                            type="button"
-                            onClick={() => addField(f)}
-                            disabled={isAdded}
+                            onMouseEnter={() => setHoveredSavedQuestionId(f.field_id)}
+                            onMouseLeave={() => setHoveredSavedQuestionId(null)}
                             style={{
-                              padding: '6px 12px',
+                              padding: '0 8px 0 12px',
                               borderRadius: '9999px',
                               fontSize: '12px',
-                              cursor: isAdded ? 'default' : 'pointer',
                               border: `1px solid ${isAdded ? '#E5E7EB' : f.scope === 'common' ? '#BFDBFE' : '#FED7AA'}`,
                               backgroundColor: isAdded ? '#F3F4F6' : f.scope === 'common' ? '#EFF6FF' : '#FFF7ED',
                               color: isAdded ? '#9CA3AF' : f.scope === 'common' ? '#2563EB' : '#E67E22',
@@ -692,20 +736,55 @@ export default function FormCreationPage() {
                               gap: '4px',
                             }}
                           >
-                            {isAdded && <span>&#10003;</span>}
-                            {f.field_label}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => addField(f)}
+                              disabled={isAdded}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0',
+                                border: 'none', background: 'none', color: 'inherit', font: 'inherit',
+                                cursor: isAdded ? 'default' : 'pointer',
+                              }}
+                            >
+                              {isAdded && <span>&#10003;</span>}
+                              <span>{f.field_label}</span>
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Remove ${f.field_label} from ${isInitiativeTab ? 'initiative' : 'core'} questions`}
+                              title={`Remove from ${isInitiativeTab ? 'initiative' : 'core'} questions`}
+                              onClick={(event) => removeSavedQuestion(f, event)}
+                              disabled={removingSavedQuestionId === f.field_id}
+                              style={{
+                                marginLeft: '3px',
+                                padding: '2px',
+                                border: 'none',
+                                background: 'none',
+                                color: 'inherit',
+                                fontSize: '14px',
+                                lineHeight: 1,
+                                fontWeight: 700,
+                                opacity: hoveredSavedQuestionId === f.field_id ? 1 : 0,
+                                pointerEvents: hoveredSavedQuestionId === f.field_id ? 'auto' : 'none',
+                                transition: 'opacity 0.15s ease',
+                                cursor: removingSavedQuestionId === f.field_id ? 'wait' : 'pointer',
+                              }}
+                            >×</button>
+                          </div>
                         );
                       })}
                     </div>
                   </>
                 ) : (
                   <p style={{ fontSize: '13px', color: '#9CA3AF', textAlign: 'center', padding: '16px 0', margin: 0 }}>
-                    No saved questions available
+                    {isInitiativeTab && !selectedInitiative
+                      ? 'Select an initiative to view its questions'
+                      : `No ${isInitiativeTab ? 'initiative' : 'core'} questions available`}
                   </p>
                 )}
               </>
-            )}
+              );
+            })()}
           </div>
         </div>
       </div>

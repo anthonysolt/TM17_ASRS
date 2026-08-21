@@ -39,7 +39,7 @@ describe('/api/surveys/templates integration', () => {
     ).run('pulse_1', 'How are you?', 'choice', 'common').lastInsertRowid);
 
     state.db.prepare(
-      'INSERT INTO form_field (form_id, field_id, display_order, required, help_text) VALUES (?, ?, 0, 1, ?)'
+      'INSERT INTO form_questions (form_id, field_id, display_order, required, help_text) VALUES (?, ?, 0, 1, ?)'
     ).run(formId, fieldId, 'Select one');
 
     state.db.prepare(
@@ -91,7 +91,7 @@ describe('/api/surveys/templates integration', () => {
         title: 'Readiness Survey',
         description: 'A readiness template',
         questions: [
-          { text: { question: 'Q1', type: 'choice', required: true, options: ['yes', 'no'] } },
+          { text: { question: 'Q1', type: 'choice', required: true, is_core_question: true, options: ['yes', 'no'] } },
           { text: { question: 'Q2', type: 'text', required: false } },
         ],
       }),
@@ -106,10 +106,47 @@ describe('/api/surveys/templates integration', () => {
     const formCount = state.db.prepare('SELECT COUNT(*) AS c FROM form WHERE form_name = ?').get('Readiness Survey').c;
     const fieldCount = state.db.prepare('SELECT COUNT(*) AS c FROM field').get().c;
     const optionCount = state.db.prepare('SELECT COUNT(*) AS c FROM field_options').get().c;
+    const reusableQuestion = state.db.prepare(
+      'SELECT is_core_question, field_type, validation_rules FROM field WHERE field_label = ?'
+    ).get('Q1');
 
     expect(formCount).toBe(1);
     expect(fieldCount).toBe(2);
     expect(optionCount).toBe(2);
+    expect(reusableQuestion.is_core_question).toBe(1);
+    expect(reusableQuestion.field_type).toBe('text');
+    expect(JSON.parse(reusableQuestion.validation_rules).ui_type).toBe('choice');
+  });
+
+  test('POST reuses a core question and its options without duplicating either', async () => {
+    process.env.NODE_ENV = 'development';
+    const tokens = createSessionForRank(state.db, { rank: 100 });
+    const fieldId = Number(state.db.prepare(
+      'INSERT INTO field (field_key, field_label, field_type, scope, is_core_question, validation_rules) VALUES (?, ?, ?, ?, 1, ?)'
+    ).run('shared_choice', 'Shared choice', 'text', 'common', JSON.stringify({ ui_type: 'choice' })).lastInsertRowid);
+    state.db.prepare(
+      'INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, 0), (?, ?, ?, 1)'
+    ).run(fieldId, 'yes', 'Yes', fieldId, 'no', 'No');
+
+    for (const title of ['Form A', 'Form B']) {
+      const response = await POST(new Request('http://localhost:3000/api/surveys/templates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...createAuthedRequestHeaders(tokens, { csrf: true }),
+        },
+        body: JSON.stringify({
+          title,
+          initiative_id: 1,
+          questions: [{ field_id: fieldId, question: 'Shared choice', type: 'choice', options: ['yes', 'no'] }],
+        }),
+      }));
+      expect(response.status).toBe(201);
+    }
+
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM field WHERE field_id = ?').get(fieldId).c).toBe(1);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM field_options WHERE field_id = ?').get(fieldId).c).toBe(2);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM form_questions WHERE field_id = ?').get(fieldId).c).toBe(2);
   });
 
   test('DELETE template removes template and related submissions/reports', async () => {

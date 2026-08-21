@@ -79,6 +79,15 @@ describe('validateFieldValue — select', () => {
   });
 });
 
+describe('validateFieldValue — text-backed radio', () => {
+  const radioField = { field_type: 'radio', options: ['yes', 'no'] };
+
+  it('validates the selected text against its answer options', () => {
+    expect(validateFieldValue('yes', radioField, null)).toBeNull();
+    expect(validateFieldValue('maybe', radioField, null)).toContain('valid option');
+  });
+});
+
 describe('resolveValidationRules', () => {
   it('merges base and override, with override winning on conflict', () => {
     const base = JSON.stringify({ minLength: 2, maxLength: 10 });

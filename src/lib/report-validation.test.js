@@ -15,6 +15,7 @@ describe('report-validation', () => {
       expressions: [{ attribute: 'Grade', operator: '=', value: '7th' }],
       sorts: [{ attribute: 'Grade', direction: 'asc' }],
       trendConfig: { variables: ['Grade'] },
+      questionSelections: [{ id: 12, method: 'delta_halves' }],
     });
     expect(result.valid).toBe(true);
     expect(result.value.initiativeId).toBe(2);
@@ -26,6 +27,14 @@ describe('report-validation', () => {
       expressions: 'bad',
     });
     expect(result.valid).toBe(false);
+  });
+
+  test.each(['most_popular', 'average', 'least_common'])('accepts the %s question analysis method', (method) => {
+    const result = validateReportCreatePayload({
+      initiativeId: 2,
+      questionSelections: [{ id: 12, method }],
+    });
+    expect(result.valid).toBe(true);
   });
 
   test('validates update payload', () => {

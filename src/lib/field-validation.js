@@ -63,7 +63,7 @@ function validateType(value, field) {
     }
     return 'Please enter a valid date';
   }
-  if ((field_type === 'select' || field_type === 'choice') && Array.isArray(field.options)) {
+  if (['select', 'choice', 'radio'].includes(field_type) && Array.isArray(field.options)) {
     if (!field.options.includes(value)) {
       return 'Please select a valid option';
     }

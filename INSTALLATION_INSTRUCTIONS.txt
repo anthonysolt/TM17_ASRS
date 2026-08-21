@@ -1,0 +1,74 @@
+INSTALLATION INSTRUCTIONS - TM17_ASRS
+
+macOS (Homebrew)
+------------------
+1) Install Homebrew (if not installed):
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+2) Install Node.js and PostgreSQL, start Postgres:
+brew update
+brew install node postgresql
+brew services start postgresql
+
+3) Verify installations:
+psql --version
+node --version
+
+4) Create role and database (run as a postgres superuser):
+psql postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
+psql postgres -c "CREATE DATABASE asrs OWNER asrs;"
+
+5) Restore provided dump into the database (from repo root):
+pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs database/local_snapshot.dump --no-owner --no-acl
+
+6) Verify tables:
+set -a; [ ! -f .env.local ] || . ./.env.local; set +a
+psql "$DATABASE_URL" -c "\dt"
+
+7) Install dependencies and run app:
+npm install
+npm run dev
+
+Optional: use the repo scripts to build schema + seed if not using dump:
+npm run db:setup
+
+Windows (winget)
+------------------
+Run PowerShell as Administrator for installs and service control.
+
+1) Install Node.js and PostgreSQL with winget:
+winget install --id OpenJS.NodeJS -e
+winget install --id PostgreSQL.PostgreSQL -e
+
+2) Start PostgreSQL service (service name may vary):
+# Use Services app or run an example command (adjust version):
+net start postgresql-x64-15
+
+3) Verify installations in PowerShell:
+psql --version
+node --version
+
+4) Create role and database (run as postgres user):
+psql -U postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
+psql -U postgres -c "CREATE DATABASE asrs OWNER asrs;"
+
+5) Restore provided dump (from repo root):
+pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs .\database\local_snapshot.dump --no-owner --no-acl
+
+6) Verify tables (load DATABASE_URL from .env.local):
+$env:DATABASE_URL = (Get-Content .env.local | Select-String -Pattern '^DATABASE_URL=' | ForEach-Object { $_ -replace '^DATABASE_URL=' , '' })
+psql $env:DATABASE_URL -c "\dt"
+
+7) Install dependencies and run app:
+npm install
+npm run dev
+
+Notes & Troubleshooting
+- The repo uses `DATABASE_URL` in `.env.local` (example: DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs).
+- Use `pg_restore` when you have a custom-format dump (`.dump` or `.dump` created with `pg_dump --format=custom`).
+- If `pg_restore` fails on permissions, restore as a superuser and then change ownership, or ensure `asrs` role exists.
+- On Windows, winget package ids and service names can differ; run `winget search postgresql` and check Services.
+
+Paths referenced in this guide (relative to repo root):
+- .env.local
+- database/local_snapshot.dump

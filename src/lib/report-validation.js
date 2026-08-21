@@ -51,6 +51,27 @@ export function validateReportCreatePayload(body) {
     return { valid: false, error: 'description must be a string' };
   }
 
+  if (!Array.isArray(body.questionSelections) || body.questionSelections.length === 0) {
+    return { valid: false, error: 'Select at least one survey question for analysis' };
+  }
+  const questionIds = new Set();
+  const questionSelections = [];
+  for (const selection of body.questionSelections) {
+    const id = asFiniteNumber(selection?.id);
+    const method = selection?.method || 'delta_halves';
+    if (id === null || id <= 0) {
+      return { valid: false, error: 'Each selected question must have a valid id' };
+    }
+    if (questionIds.has(id)) {
+      return { valid: false, error: 'A survey question cannot be selected more than once' };
+    }
+    if (!['delta_halves', 'linear_slope', 'most_popular', 'average', 'least_common'].includes(method)) {
+      return { valid: false, error: 'Invalid question analysis method' };
+    }
+    questionIds.add(id);
+    questionSelections.push({ id, method, thresholdPct: 2 });
+  }
+
   if (body.filters !== undefined && !isPlainObject(body.filters)) {
     return { valid: false, error: 'filters must be an object of key/value pairs' };
   }
@@ -98,6 +119,7 @@ export function validateReportCreatePayload(body) {
       expressions,
       sorts,
       trendConfig: body.trendConfig,
+      questionSelections,
       includeAiInsights: body.includeAiInsights === true,
       clientMeta: isPlainObject(body.clientMeta) ? body.clientMeta : {},
     },

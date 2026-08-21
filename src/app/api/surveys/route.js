@@ -1,5 +1,4 @@
 import db, { initializeDatabase } from '@/lib/db';
-import { generateAIReport } from '@/lib/openai';
 import { NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { validateAndCleanSurvey, validateTemplateAnswers } from '@/lib/survey-validation';
@@ -19,10 +18,6 @@ export async function POST(request) {
 
     const body = await request.json();
     const cleaned = validateAndCleanSurvey(body);
-
-    // Basic stats and AI report (best-effort)
-    const basicStats = generateBasicStats(cleaned.responses);
-    const reportData = await generateAIReport(cleaned.responses, basicStats);
 
     // Duplicate submission guard: exact same email + responses JSON
     const responsesJSON = JSON.stringify(cleaned.responses);
@@ -44,17 +39,23 @@ export async function POST(request) {
           if (answersToValidate && Object.keys(answersToValidate).length > 0) {
             // Load field definitions + options for this form
             const formFields = db.prepare(`
-              SELECT f.field_id, f.field_type, ff.required,
+              SELECT f.field_id, f.field_type, fq.required,
                      f.validation_rules AS field_rules,
-                     ff.validation_rules AS form_field_rules
-              FROM form_field ff
-              JOIN field f ON ff.field_id = f.field_id
-              WHERE ff.form_id = ?
+                     fq.validation_rules AS form_field_rules
+              FROM form_questions fq
+              JOIN field f ON fq.field_id = f.field_id
+              WHERE fq.form_id = ?
             `).all(formRow.form_id);
 
             const getOptions = db.prepare(`SELECT option_value FROM field_options WHERE field_id = ? ORDER BY display_order`);
             for (const ff of formFields) {
-              if (['select', 'choice', 'multiselect'].includes(ff.field_type)) {
+              try {
+                const rules = ff.field_rules ? JSON.parse(ff.field_rules) : null;
+                if (rules?.ui_type) ff.field_type = rules.ui_type;
+              } catch {
+                // Keep the stored field type when validation metadata is malformed.
+              }
+              if (['select', 'radio', 'choice', 'multiselect', 'checkbox'].includes(ff.field_type)) {
                 ff.options = getOptions.all(ff.field_id).map(o => o.option_value);
               }
             }
@@ -71,12 +72,10 @@ export async function POST(request) {
       }
     }
 
-    // Use a transaction so survey + report + distribution update are atomic
-    const insertSurveyAndReport = db.transaction((name, email, responsesJSONInner, reportJSON, templateId) => {
+    // Keep survey persistence and distribution counting atomic.
+    const insertSurvey = db.transaction((name, email, responsesJSONInner, templateId) => {
       const surveyInfo = db.prepare(`INSERT INTO surveys (name, email, responses) VALUES (?, ?, ?)`).run(name, email, responsesJSONInner);
       const surveyId = surveyInfo.lastInsertRowid;
-
-      db.prepare(`INSERT INTO reports (survey_id, report_data) VALUES (?, ?)`).run(surveyId, reportJSON);
 
       if (templateId) {
         const today = toLocalYyyyMmDd(new Date());
@@ -98,11 +97,10 @@ export async function POST(request) {
       return surveyId;
     });
 
-    const surveyId = insertSurveyAndReport(
+    const surveyId = insertSurvey(
       cleaned.name,
       cleaned.email,
       responsesJSON,
-      JSON.stringify(reportData),
       effectiveTemplateId
     );
 
@@ -119,11 +117,27 @@ export async function POST(request) {
             const submissionInfo = db.prepare(`INSERT INTO submission (initiative_id, form_id, submitted_by_user_id) VALUES (?, ?, NULL)`).run(initiativeId || 1, formId);
             const submissionId = submissionInfo.lastInsertRowid;
 
-            const insertVal = db.prepare(`INSERT INTO submission_value (submission_id, field_id, value_text, value_number, value_date, value_bool, value_json) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+            const insertVal = db.prepare(`INSERT INTO submission_value (submission_id, form_question_id, value_text, value_number, value_date, value_bool, value_json) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+            const getField = db.prepare(`
+              SELECT fq.form_question_id, f.field_type, f.validation_rules
+              FROM field f
+              JOIN form_questions fq ON fq.field_id = f.field_id
+              WHERE f.field_id = ? AND fq.form_id = ?
+              LIMIT 1
+            `);
 
             for (const [fieldKey, rawVal] of Object.entries(answers || {})) {
               const fieldId = Number(fieldKey);
               if (!fieldId) continue;
+              const field = getField.get(fieldId, formId);
+              if (!field) continue;
+
+              let displayType = field.field_type;
+              try {
+                displayType = JSON.parse(field.validation_rules || '{}').ui_type || displayType;
+              } catch {
+                // Fall back to the storage type when optional UI metadata is malformed.
+              }
 
               let v_text = null;
               let v_number = null;
@@ -133,25 +147,23 @@ export async function POST(request) {
 
               if (rawVal === null || rawVal === undefined) {
                 // leave all null
-              } else if (typeof rawVal === 'number') {
-                v_number = rawVal;
-              } else if (typeof rawVal === 'boolean') {
-                v_bool = rawVal ? 1 : 0;
-              } else if (typeof rawVal === 'object') {
+              } else if (field.field_type === 'number' || field.field_type === 'rating') {
+                const numericValue = Number(rawVal);
+                if (Number.isFinite(numericValue)) v_number = numericValue;
+              } else if (displayType === 'select' || displayType === 'radio' || displayType === 'choice') {
+                v_text = String(rawVal).slice(0, 1000);
+              } else if (field.field_type === 'boolean' || field.field_type === 'yesno') {
+                v_bool = rawVal === true || rawVal === 1 || rawVal === '1' || rawVal === 'true' || rawVal === 'yes' ? 1 : 0;
+              } else if (field.field_type === 'date') {
+                v_date = String(rawVal);
+              } else if (field.field_type === 'json' || field.field_type === 'multiselect' || displayType === 'checkbox' || typeof rawVal === 'object') {
                 v_json = JSON.stringify(rawVal);
-              } else if (typeof rawVal === 'string') {
-                // ISO date-ish detection
-                if (/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2})?/.test(rawVal)) {
-                  v_date = rawVal;
-                } else {
-                  v_text = rawVal.slice(0, 1000);
-                }
               } else {
                 v_text = String(rawVal).slice(0, 1000);
               }
 
               try {
-                insertVal.run(submissionId, fieldId, v_text, v_number, v_date, v_bool, v_json);
+                insertVal.run(submissionId, field.form_question_id, v_text, v_number, v_date, v_bool, v_json);
               } catch (e) {
                 // Ignore unique constraint or individual value errors; continue
               }
@@ -190,8 +202,6 @@ export async function POST(request) {
       surveyId: Number(surveyId),
       submittedAt: submissionInfo?.submittedAt || new Date().toISOString(),
       survey: submissionInfo,
-      report: reportData,
-      ai_configured: reportData?.aiGenerated !== false || !reportData?.error,
     });
   } catch (error) {
     const errorMessage = String(error?.message || '');
@@ -290,38 +300,4 @@ export async function DELETE(request) {
       { status: 500 }
     );
   }
-}
-
-// --------------- helpers ---------------
-
-function generateBasicStats(responses) {
-  const totalQuestions = Object.keys(responses).length;
-  const answeredQuestions = Object.values(responses).filter(
-    (r) => r !== null && r !== ''
-  ).length;
-
-  const completionRate =
-    totalQuestions > 0
-      ? parseFloat(((answeredQuestions / totalQuestions) * 100).toFixed(2))
-      : 0;
-
-  const responseTypes = { text: 0, numeric: 0, choice: 0 };
-
-  Object.values(responses).forEach((response) => {
-    if (typeof response === 'number') {
-      responseTypes.numeric++;
-    } else if (typeof response === 'string') {
-      if (
-        ['yes', 'no', 'maybe', 'true', 'false'].includes(
-          response.toLowerCase()
-        )
-      ) {
-        responseTypes.choice++;
-      } else {
-        responseTypes.text++;
-      }
-    }
-  });
-
-  return { completionRate, totalQuestions, answeredQuestions, responseTypes };
 }

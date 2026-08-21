@@ -102,6 +102,14 @@ export default function ManageSurveysPage() {
     window.open(`/api/qr-codes/download?qrCodeKey=${encodeURIComponent(qrCodeKey)}&format=${format}&size=400&download=true`, '_blank');
   };
 
+  const openSurvey = (templateId) => {
+    const surveyQrCode = qrCodes.find(qr =>
+      qr.qrType === 'survey_template' && String(qr.targetId) === String(templateId)
+    );
+    const surveyUrl = surveyQrCode?.targetUrl || `/survey?template=${encodeURIComponent(templateId)}`;
+    window.location.assign(surveyUrl);
+  };
+
   useEffect(() => {
     fetchTemplates();
     fetchSurveys();
@@ -319,19 +327,19 @@ export default function ManageSurveysPage() {
                   <div style={{ display: 'flex', gap: '16px', borderTop: '1px solid #F3F4F6', paddingTop: '12px' }}>
                     <button
                       onClick={(e) => { e.stopPropagation(); router.push(`/manage-surveys/${template.id}`); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#E67E22', padding: 0 }}
+                      style={{ background: '#fff', border: '1px solid #E67E22', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#E67E22', padding: '5px 12px' }}
                     >
                       Manage
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); router.push(`/survey?template=${template.id}`); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#6B7280', padding: 0 }}
+                      onClick={(e) => { e.stopPropagation(); openSurvey(template.id); }}
+                      style={{ background: '#fff', border: '1px solid #2563EB', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#2563EB', padding: '5px 12px' }}
                     >
-                      Preview
+                      View
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); deleteTemplate(template.id); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#DC2626', padding: 0, marginLeft: 'auto' }}
+                      style={{ background: '#fff', border: '1px solid #DC2626', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#DC2626', padding: '5px 12px', marginLeft: 'auto' }}
                     >
                       Delete
                     </button>

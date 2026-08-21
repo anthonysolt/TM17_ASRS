@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/server-auth', () => ({
   requireAuth: () => ({ user: { user_id: 2, user_type: 'staff', permissions: ['surveys.take', 'initiatives.manage', 'reporting.view', 'reports.create', 'forms.create', 'surveys.distribute', 'goals.manage', 'performance.view', 'budgets.manage', 'conflicts.manage', 'users.manage', 'audit.view', 'import.manage'] } }),
 }));
 
-import { GET, POST } from '@/app/api/surveys/distributions/route';
+import { GET, POST, DELETE } from '@/app/api/surveys/distributions/route';
 
 describe('/api/surveys/distributions date handling', () => {
   const RealDate = Date;
@@ -120,5 +120,24 @@ describe('/api/surveys/distributions date handling', () => {
     expect(res.status).toBe(200);
     expect(payload.distributions[0].status).toBe('active');
     expect(updateRun).toHaveBeenCalledWith('active', 7);
+  });
+
+  test('DELETE removes a distribution by id', async () => {
+    const deleteRun = vi.fn();
+    prepareMock.mockImplementation((sql) => {
+      if (sql.includes('SELECT distribution_id')) {
+        return { get: vi.fn(() => ({ distribution_id: 7, survey_template_id: 'tmpl-1', title: 'Window Test' })) };
+      }
+      if (sql.includes('DELETE FROM survey_distribution')) return { run: deleteRun };
+      return { run: vi.fn() };
+    });
+
+    const res = await DELETE(new Request(
+      'http://localhost:3000/api/surveys/distributions?distributionId=7',
+      { method: 'DELETE' }
+    ));
+    expect(res.status).toBe(200);
+    expect(deleteRun).toHaveBeenCalledWith(7);
+    expect(await res.json()).toEqual({ success: true, distributionId: 7 });
   });
 });

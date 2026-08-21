@@ -17,44 +17,20 @@ describe('notifications helpers', () => {
     expect(countUnreadNotifications(notifications, readTimestamp)).toBe(0);
   });
 
-  test('returns only active surveys and published reports for public users', () => {
+  test('returns only the five allowed lifecycle notification types', () => {
     const notifications = buildNotificationsFeed({
-      userType: 'public',
-      activeSurveys: [
-        {
-          distribution_id: 7,
-          title: 'Spring Student Voice Survey',
-          initiative_name: 'E-Gaming and Careers',
-          created_at: '2026-04-11T10:00:00.000Z',
-        },
-      ],
-      reports: [
-        { id: 2, name: 'Published Report', status: 'published', created_at: '2026-04-11T09:00:00.000Z' },
-        { id: 3, name: 'Draft Report', status: 'draft', created_at: '2026-04-11T11:00:00.000Z' },
-      ],
-      surveySubmissions: [
-        { id: 1, name: 'Should Not Show', email: 'x@test.com', submitted_at: '2026-04-11T12:00:00.000Z' },
-      ],
-      initiatives: [
-        { initiative_id: 9, initiative_name: 'Should Not Show' },
+      activity: [
+        { audit_id: 1, event: 'survey.submitted', payload: '{}', created_at: '2026-04-11T12:00:00.000Z' },
+        { audit_id: 2, event: 'report.created', payload: '{"name":"Annual Report"}', created_at: '2026-04-11T11:00:00.000Z' },
+        { audit_id: 3, event: 'report.deleted', payload: { name: 'Old Report' }, created_at: '2026-04-11T10:00:00.000Z' },
+        { audit_id: 4, event: 'form.created', payload: '{"title":"Student Survey"}', created_at: '2026-04-11T09:00:00.000Z' },
+        { audit_id: 5, event: 'form.deleted', payload: '{"title":"Old Form"}', created_at: '2026-04-11T08:00:00.000Z' },
+        { audit_id: 6, event: 'goal.met', payload: '{"goal_name":"Reach 100 students"}', created_at: '2026-04-11T07:00:00.000Z' },
       ],
     });
 
-    expect(notifications).toEqual([
-      {
-        id: 'survey-distribution-7',
-        type: 'survey',
-        title: 'New Survey Available',
-        description: 'Spring Student Voice Survey — E-Gaming and Careers',
-        timestamp: '2026-04-11T10:00:00.000Z',
-      },
-      {
-        id: 'report-2',
-        type: 'report',
-        title: 'Published Report',
-        description: 'Published Report',
-        timestamp: '2026-04-11T09:00:00.000Z',
-      },
+    expect(notifications.map(notification => notification.title)).toEqual([
+      'Report Created', 'Report Deleted', 'Form Created', 'Form Deleted', 'Goal Met',
     ]);
   });
 });

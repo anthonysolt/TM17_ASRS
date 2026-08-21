@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { queryTableData } from '@/lib/query-helpers';
+import { querySelectedQuestionData } from '@/lib/query-helpers';
 import {
   validateReportCreatePayload,
   validateReportDeleteParams,
@@ -53,16 +53,6 @@ function finishGenerationLog(db, logId, result) {
     result.errorMessage || null,
     Number(logId)
   );
-}
-
-function safeParseJson(value, fallback) {
-  if (value === null || value === undefined || value === '') return fallback;
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
 }
 
 export async function GET(request) {
@@ -139,15 +129,23 @@ export async function POST(request) {
     const initiativeId = Number(payload.initiativeId);
 
     const initiative = db.prepare(
-      'SELECT initiative_id, initiative_name, description, attributes FROM initiative WHERE initiative_id = ?'
+      'SELECT initiative_id, initiative_name, description FROM initiative WHERE initiative_id = ?'
     ).get(initiativeId);
 
     if (!initiative) {
       return NextResponse.json({ error: 'No data found for this initiative' }, { status: 404 });
     }
 
-    const tableData = queryTableData(db, initiativeId);
-    const attributes = safeParseJson(initiative.attributes, []);
+    const selectedIds = payload.questionSelections.map((selection) => selection.id);
+    const selectedQuestionData = querySelectedQuestionData(db, initiativeId, selectedIds);
+    if (selectedQuestionData.questions.length !== selectedIds.length) {
+      return NextResponse.json(
+        { error: 'One or more selected questions do not belong to this initiative' },
+        { status: 400 }
+      );
+    }
+    const tableData = selectedQuestionData.tableData;
+    const attributes = selectedQuestionData.questions.map((question) => question.column);
 
     // Compute summary from real submission data
     const submissionCount = db.prepare(
@@ -158,7 +156,8 @@ export async function POST(request) {
       SELECT AVG(sv.value_number) as avg_score
       FROM submission_value sv
       JOIN submission s ON s.submission_id = sv.submission_id
-      JOIN field f ON f.field_id = sv.field_id
+      JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+      JOIN field f ON f.field_id = fq.field_id
       WHERE s.initiative_id = ? AND f.field_type = 'rating' AND sv.value_number IS NOT NULL
     `).get(initiativeId);
 
@@ -177,25 +176,27 @@ export async function POST(request) {
     };
 
     // Compute chart data from real submission values
+    const selectedPlaceholders = selectedIds.map(() => '?').join(', ');
     const chartFields = db.prepare(`
       SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
       FROM field f
-      JOIN form_field ff ON ff.field_id = f.field_id
-      JOIN form fm ON fm.form_id = ff.form_id
-      WHERE fm.initiative_id = ?
-    `).all(initiativeId);
+      JOIN form_questions fq ON fq.field_id = f.field_id
+      JOIN form fm ON fm.form_id = fq.form_id
+      WHERE fm.initiative_id = ? AND f.field_id IN (${selectedPlaceholders})
+    `).all(initiativeId, ...selectedIds);
 
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
     for (const field of chartFields) {
-      const key = field.field_key || field.field_label;
+      const key = field.field_label || field.field_key;
 
       if (['select', 'choice', 'multiselect', 'yesno', 'boolean'].includes(field.field_type)) {
         const distribution = db.prepare(`
           SELECT sv.value_text as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_text IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -207,7 +208,8 @@ export async function POST(request) {
           SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_number IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -223,7 +225,8 @@ export async function POST(request) {
           SELECT sv.value_text as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_text IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -236,7 +239,8 @@ export async function POST(request) {
           SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
-          WHERE s.initiative_id = ? AND sv.field_id = ? AND sv.value_number IS NOT NULL
+          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
+          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -250,21 +254,24 @@ export async function POST(request) {
     const expressions = payload.expressions || [];
     const sorts = payload.sorts || [];
 
-    const incomingTrendConfig = payload.trendConfig === undefined
-      ? { variables: [], enabledCalc: false, enabledDisplay: true }
-      : payload.trendConfig;
-
-    // Combine initiative attributes with actual tableData columns for validation
-    const tableColumns = tableData.length > 0
-      ? Object.keys(tableData[0]).filter(k => k !== 'submission_id' && k !== 'submitted_at')
-      : [];
-    const allAvailableAttributes = [...new Set([...attributes, ...tableColumns])];
-    const trendConfigValidation = reportEngine.validateTrendConfig(incomingTrendConfig, allAvailableAttributes);
-    if (!trendConfigValidation.valid) {
-      return NextResponse.json({ error: trendConfigValidation.error }, { status: 400 });
+    const selectionsById = new Map(payload.questionSelections.map((selection) => [selection.id, selection]));
+    const questionAnalyses = selectedQuestionData.questions.map((question) => ({
+      id: question.field_id,
+      label: question.field_label || question.column,
+      column: question.column,
+      method: selectionsById.get(question.field_id).method,
+      thresholdPct: 2,
+    }));
+    for (const analysis of questionAnalyses) {
+      const validation = reportEngine.validateTrendConfig({
+        variables: [analysis.column], enabledCalc: true, enabledDisplay: true,
+        method: analysis.method, thresholdPct: analysis.thresholdPct,
+      }, attributes);
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
+      analysis.trendConfig = validation.normalized;
     }
-
-    const trendConfig = trendConfigValidation.normalized;
 
     generationLogId = startGenerationLog(db, {
       initiativeId,
@@ -272,7 +279,7 @@ export async function POST(request) {
       filtersCount: Object.keys(filters).length,
       expressionsCount: expressions.length,
       sortsCount: sorts.length,
-      trendVariablesCount: trendConfig.variables.length,
+      trendVariablesCount: questionAnalyses.length,
     });
 
     const { filteredData, metrics, explainability } = reportEngine.processReportData(
@@ -283,9 +290,11 @@ export async function POST(request) {
       attributes
     );
 
-    const trendData = reportEngine.computeTrendData(filteredData, trendConfig, {
-      initiativeId,
-      reportName: payload.name || '',
+    const trendData = questionAnalyses.flatMap((analysis) => {
+      return reportEngine.computeTrendData(filteredData, analysis.trendConfig, {
+        initiativeId,
+        reportName: payload.name || '',
+      });
     });
 
     // Optional AI insights generation
@@ -326,7 +335,7 @@ export async function POST(request) {
         filters,
         expressions,
         sorts,
-        trendConfig,
+        questionSelections: questionAnalyses.map(({ trendConfig: _trendConfig, ...analysis }) => analysis),
       },
       results: {
         metrics,

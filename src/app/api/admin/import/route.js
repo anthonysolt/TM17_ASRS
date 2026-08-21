@@ -72,7 +72,12 @@ const TABLE_SCHEMAS = {
     label: 'Submission Values',
     columns: {
       submission_id: { type: 'fk', required: true, references: 'submission' },
-      field_id: { type: 'fk', required: true, references: 'field' },
+      form_question_id: {
+        type: 'fk',
+        required: true,
+        references: 'form_questions',
+        referenceColumn: 'form_question_id',
+      },
       value_text: { type: 'text' },
       value_number: { type: 'number' },
       value_date: { type: 'text' },
@@ -207,7 +212,7 @@ function validateRow(row, schema, columnMapping, db, rowIndex) {
         continue;
       }
       const refTable = colSchema.references;
-      const pkCol = TABLE_SCHEMAS[refTable]?.autoId || `${refTable}_id`;
+      const pkCol = colSchema.referenceColumn || TABLE_SCHEMAS[refTable]?.autoId || `${refTable}_id`;
       try {
         const exists = db.prepare(`SELECT 1 FROM "${refTable}" WHERE "${pkCol}" = ?`).get(id);
         if (!exists) {

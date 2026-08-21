@@ -6,7 +6,7 @@ const dbProxy = vi.hoisted(() => ({
 
 vi.mock('../../../../lib/db.js', () => ({ default: dbProxy }));
 
-import { GET, POST, PUT, DELETE } from '@/app/api/admin/fields/route';
+import { GET, POST, PUT, PATCH, DELETE } from '@/app/api/admin/fields/route';
 import {
   closeTestDb,
   createAuthedRequestHeaders,
@@ -163,6 +163,25 @@ describe('/api/admin/fields integration', () => {
     expect(JSON.parse(dbField.validation_rules)).toEqual({ maxLength: 255 });
   });
 
+  test('PATCH removes a question from the core library without deleting it', async () => {
+    const fieldId = Number(state.db.prepare(
+      'INSERT INTO field (field_key, field_label, field_type, scope, is_core_question) VALUES (?, ?, ?, ?, 1)'
+    ).run('saved_question', 'Saved Question', 'text', 'common').lastInsertRowid);
+    const tokens = createSessionForRank(state.db, { rank: 50 });
+    const req = new Request(`http://localhost:3000/api/admin/fields?fieldId=${fieldId}`, {
+      method: 'PATCH',
+      headers: createAuthedRequestHeaders(tokens, { csrf: true }),
+    });
+
+    const response = await PATCH(req);
+    const field = state.db.prepare(
+      'SELECT is_core_question FROM field WHERE field_id = ?'
+    ).get(fieldId);
+
+    expect(response.status).toBe(200);
+    expect(field.is_core_question).toBe(0);
+  });
+
   test('DELETE removes a field and its options (via cascade)', async () => {
     const fieldId = Number(
       state.db.prepare(
@@ -205,7 +224,7 @@ describe('/api/admin/fields integration', () => {
     );
 
     state.db.prepare(
-      'INSERT INTO form_field (form_id, field_id, display_order) VALUES (?, ?, ?)'
+      'INSERT INTO form_questions (form_id, field_id, display_order) VALUES (?, ?, ?)'
     ).run(formId, fieldId, 0);
 
     const req = new Request(`http://localhost:3000/api/admin/fields?fieldId=${fieldId}`, {

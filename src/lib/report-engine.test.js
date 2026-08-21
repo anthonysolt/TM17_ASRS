@@ -122,4 +122,41 @@ describe('report-engine', () => {
     const upTrend = computeTrendData(rowsBoundary, upConfig.normalized);
     expect(upTrend[0].direction).toBe('up');
   });
+
+  test.each([
+    ['most_popular', 'Blue', 2],
+    ['least_common', 'Red', 1],
+  ])('computes %s answers from short categorical datasets', (method, expected, count) => {
+    const config = validateTrendConfig(
+      { variables: ['Favorite Color'], method },
+      ['Favorite Color']
+    );
+    const result = computeTrendData([
+      { 'Favorite Color': 'Blue' },
+      { 'Favorite Color': 'Red' },
+      { 'Favorite Color': 'Blue' },
+    ], config.normalized);
+
+    expect(result[0].analysisType).toBe(method);
+    expect(result[0].result).toBe(expected);
+    expect(result[0].answerCount).toBe(count);
+    expect(result[0].responsesEvaluated).toBe(3);
+  });
+
+  test('computes the average of numeric answers and ignores non-numeric answers', () => {
+    const config = validateTrendConfig(
+      { variables: ['Rating'], method: 'average' },
+      ['Rating']
+    );
+    const result = computeTrendData([
+      { Rating: 2 },
+      { Rating: '4' },
+      { Rating: 'not answered' },
+      { Rating: 6 },
+    ], config.normalized);
+
+    expect(result[0].analysisType).toBe('average');
+    expect(result[0].result).toBe(4);
+    expect(result[0].responsesEvaluated).toBe(3);
+  });
 });

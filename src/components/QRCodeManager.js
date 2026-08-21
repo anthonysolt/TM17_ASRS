@@ -482,21 +482,13 @@ export default function QRCodeManager({
               </div>
 
               {stats ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* Total Scans */}
                   <div className="bg-white p-4 rounded-md border border-gray-200 text-center">
                     <p className="text-3xl font-bold text-asrs-red">
                       {stats.totalScans}
                     </p>
                     <p className="text-sm text-gray-600 mt-1">Total Scans</p>
-                  </div>
-
-                  {/* Unique Visitors */}
-                  <div className="bg-white p-4 rounded-md border border-gray-200 text-center">
-                    <p className="text-3xl font-bold text-asrs-orange">
-                      {stats.uniqueIPs}
-                    </p>
-                    <p className="text-sm text-gray-600 mt-1">Unique IPs</p>
                   </div>
 
                   {/* Conversions */}

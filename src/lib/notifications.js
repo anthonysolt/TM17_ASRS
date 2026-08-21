@@ -25,56 +25,30 @@ export function countUnreadNotifications(notifications, lastCheckedAt) {
 }
 
 export function buildNotificationsFeed({
-  userType,
-  surveySubmissions = [],
-  reports = [],
-  initiatives = [],
-  activeSurveys = [],
+  activity = [],
 }) {
-  if (userType === 'public') {
-    return [
-      ...activeSurveys.map((survey) => ({
-        id: `survey-distribution-${survey.distribution_id}`,
-        type: 'survey',
-        title: 'New Survey Available',
-        description: survey.initiative_name
-          ? `${survey.title} — ${survey.initiative_name}`
-          : survey.title,
-        timestamp: survey.created_at,
-      })),
-      ...reports
-        .filter((report) => String(report.status || '').toLowerCase() === 'published')
-        .map((report) => ({
-          id: `report-${report.id}`,
-          type: 'report',
-          title: 'Published Report',
-          description: report.name || 'Untitled report',
-          timestamp: report.created_at,
-        })),
-    ].sort(notificationSort);
-  }
+  const definitions = {
+    'report.created': { type: 'report', title: 'Report Created', fallback: 'Untitled report', keys: ['name'] },
+    'report.deleted': { type: 'report', title: 'Report Deleted', fallback: 'Untitled report', keys: ['name'] },
+    'form.created': { type: 'form', title: 'Form Created', fallback: 'Untitled form', keys: ['title'] },
+    'form.deleted': { type: 'form', title: 'Form Deleted', fallback: 'Untitled form', keys: ['title'] },
+    'goal.met': { type: 'goal', title: 'Goal Met', fallback: 'Goal target reached', keys: ['goal_name'] },
+  };
 
-  return [
-    ...surveySubmissions.map((survey) => ({
-      id: `survey-${survey.id}`,
-      type: 'survey',
-      title: 'New Survey Submission',
-      description: `${survey.name || survey.email} submitted a survey`,
-      timestamp: survey.submitted_at,
-    })),
-    ...reports.map((report) => ({
-      id: `report-${report.id}`,
-      type: 'report',
-      title: 'Report Created',
-      description: `${report.name || 'Untitled report'} — ${report.status}`,
-      timestamp: report.created_at,
-    })),
-    ...initiatives.map((initiative) => ({
-      id: `initiative-${initiative.initiative_id}`,
-      type: 'initiative',
-      title: 'Initiative Created',
-      description: initiative.initiative_name,
-      timestamp: null,
-    })),
-  ].sort(notificationSort);
+  return activity.flatMap(entry => {
+    const definition = definitions[entry.event];
+    if (!definition) return [];
+    let payload = entry.payload || {};
+    if (typeof payload === 'string') {
+      try { payload = JSON.parse(payload); } catch { payload = {}; }
+    }
+    const description = definition.keys.map(key => payload?.[key]).find(Boolean) || definition.fallback;
+    return [{
+      id: `activity-${entry.audit_id}`,
+      type: definition.type,
+      title: definition.title,
+      description,
+      timestamp: entry.created_at,
+    }];
+  }).sort(notificationSort);
 }

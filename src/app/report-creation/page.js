@@ -3,29 +3,17 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
-import { getInitiatives, getReportData } from '@/lib/data-service';
+import { getInitiatives, getReportData, getReportQuestions } from '@/lib/data-service';
 
 import StepIndicator from '@/components/report-steps/StepIndicator';
 import StepConfig from '@/components/report-steps/StepConfig';
-import StepTrends from '@/components/report-steps/StepTrends';
+import StepQuestions from '@/components/report-steps/StepQuestions';
 import StepPreview from '@/components/report-steps/StepPreview';
-import { validateTrendConfig } from '@/lib/report-engine';
 import { getUiEventBus } from '@/lib/events/ui-event-bus';
 import EVENTS from '@/lib/events/event-types';
 import { apiFetch } from '@/lib/api/client';
 
 const TOTAL_STEPS = 3;
-
-function getDefaultTrendConfig() {
-  return {
-    variables: [],
-    enabledCalc: true,
-    enabledDisplay: true,
-    method: 'delta_halves',
-    thresholdPct: 2,
-  };
-}
-
 
 export default function ReportCreationPage() {
   const [userRole, setUserRole] = useState('public');
@@ -34,6 +22,8 @@ export default function ReportCreationPage() {
   // ---- DATA ----
   const [initiatives, setInitiatives] = useState([]);
   const [tableData, setTableData] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
 
   // ---- REPORT CONFIG ----
   const [currentStep, setCurrentStep] = useState(0);
@@ -41,8 +31,7 @@ export default function ReportCreationPage() {
     selectedInitiative: null,
     reportName: '',
     description: '',
-    trendConfig: getDefaultTrendConfig(),
-    selectedAttributes: [],
+    questionSelections: [],
     startDate: '',
     endDate: '',
   });
@@ -109,19 +98,26 @@ export default function ReportCreationPage() {
   }, [reportConfig.selectedInitiative]);
 
   useEffect(() => {
-    const available = reportConfig.selectedInitiative?.attributes || [];
-    setReportConfig((prev) => {
-      const currentTrend = prev.trendConfig || getDefaultTrendConfig();
-      const nextVariables = (currentTrend.variables || []).filter((v) => available.includes(v));
-      if (nextVariables.length === (currentTrend.variables || []).length) return prev;
-      return {
-        ...prev,
-        trendConfig: {
-          ...currentTrend,
-          variables: nextVariables,
-        },
-      };
-    });
+    async function loadQuestions() {
+      const initiativeId = reportConfig.selectedInitiative?.id;
+      if (!initiativeId) {
+        setQuestions([]);
+        return;
+      }
+      setLoadingQuestions(true);
+      try {
+        const nextQuestions = await getReportQuestions(initiativeId);
+        setQuestions(nextQuestions);
+        const availableIds = new Set(nextQuestions.map((question) => question.id));
+        setReportConfig((previous) => ({
+          ...previous,
+          questionSelections: previous.questionSelections.filter((selection) => availableIds.has(selection.id)),
+        }));
+      } finally {
+        setLoadingQuestions(false);
+      }
+    }
+    loadQuestions();
   }, [reportConfig.selectedInitiative]);
 
 
@@ -148,8 +144,7 @@ export default function ReportCreationPage() {
       return reportConfig.selectedInitiative && reportConfig.reportName.trim().length > 0;
     }
     if (currentStep === 1) {
-      // Trends step is always optional — user can proceed with or without trends
-      return true;
+      return reportConfig.questionSelections.length > 0;
     }
     return true;
   }
@@ -165,20 +160,6 @@ export default function ReportCreationPage() {
     if (currentStep > 0) {
       setCurrentStep(prev => prev - 1);
       setErrorMessage('');
-    }
-  }
-
-  function handleSkip() {
-    // Only the Trends step (step 1) can be skipped
-    if (currentStep === 1) {
-      setReportConfig((prev) => ({
-        ...prev,
-        trendConfig: {
-          ...(prev.trendConfig || getDefaultTrendConfig()),
-          enabledCalc: false,
-        },
-      }));
-      handleNext();
     }
   }
 
@@ -200,8 +181,7 @@ export default function ReportCreationPage() {
           filters: {},
           expressions: [],
           sorts: [],
-          selectedAttributes: reportConfig.selectedAttributes,
-          trendConfig: reportConfig.trendConfig,
+          questionSelections: reportConfig.questionSelections,
           includeAiInsights: reportConfig.includeAiInsights || false,
         }),
       });
@@ -219,8 +199,7 @@ export default function ReportCreationPage() {
         selectedInitiative: initiatives.length > 0 ? initiatives[0] : null,
         reportName: '',
         description: '',
-        trendConfig: getDefaultTrendConfig(),
-        selectedAttributes: [],
+        questionSelections: [],
         startDate: '',
         endDate: '',
         includeAiInsights: false,
@@ -280,10 +259,11 @@ export default function ReportCreationPage() {
         );
       case 1:
         return (
-          <StepTrends
+          <StepQuestions
             reportConfig={reportConfig}
             onChange={updateConfig}
-            tableData={tableData}
+            questions={questions}
+            loading={loadingQuestions}
           />
         );
       case 2:
@@ -299,8 +279,6 @@ export default function ReportCreationPage() {
         return null;
     }
   }
-
-  const isOptionalStep = currentStep === 1;
 
   if (!authChecked) {
     return (
@@ -359,15 +337,6 @@ export default function ReportCreationPage() {
             </button>
 
             <div style={{ display: 'flex', gap: '0.75rem' }}>
-              {isOptionalStep && (
-                <button
-                  onClick={handleSkip}
-                  className="btn-outline"
-                  style={{ color: '#6B7280' }}
-                >
-                  Skip
-                </button>
-              )}
               <button
                 onClick={handleNext}
                 disabled={!canProceed()}

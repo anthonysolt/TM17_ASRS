@@ -29,6 +29,7 @@ export default function SurveyDistributionPage() {
   // Distributions list
   const [distributions, setDistributions] = useState([]);
   const [loadingDistributions, setLoadingDistributions] = useState(true);
+  const [deletingDistributionId, setDeletingDistributionId] = useState(null);
 
   // QR section state
   const [qrTemplateId, setQrTemplateId] = useState('');
@@ -37,6 +38,7 @@ export default function SurveyDistributionPage() {
   const [qrResult, setQrResult] = useState(null);
   const [qrCodes, setQrCodes] = useState([]);
   const [qrCodesLoading, setQrCodesLoading] = useState(false);
+  const [deletingQrCodeKey, setDeletingQrCodeKey] = useState(null);
 
   // ── Auth check ───────────────────────────────────────
   useEffect(() => {
@@ -112,6 +114,50 @@ export default function SurveyDistributionPage() {
   const handleDownloadQR = (qrCodeKey, format = 'png') => {
     const url = `/api/qr-codes/download?qrCodeKey=${qrCodeKey}&format=${format}&download=true`;
     window.open(url, '_blank');
+  };
+
+  const handleDeleteDistribution = async (distribution) => {
+    if (!window.confirm(`Delete the distribution “${distribution.title}”? This cannot be undone.`)) return;
+    setDeletingDistributionId(distribution.distribution_id);
+    setError('');
+    try {
+      const response = await apiFetch(
+        `/api/surveys/distributions?distributionId=${distribution.distribution_id}`,
+        { method: 'DELETE' }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Failed to delete distribution');
+      setDistributions(current => current.filter(
+        item => item.distribution_id !== distribution.distribution_id
+      ));
+      setSuccessMessage('Distribution deleted successfully.');
+    } catch (err) {
+      setError(err.message || 'Failed to delete distribution');
+    } finally {
+      setDeletingDistributionId(null);
+    }
+  };
+
+  const handleDeleteQrCode = async (qrCode) => {
+    const name = qrCode.description || qrCode.qrCodeKey;
+    if (!window.confirm(`Delete the QR code “${name}”? This cannot be undone.`)) return;
+    setDeletingQrCodeKey(qrCode.qrCodeKey);
+    setError('');
+    try {
+      const response = await apiFetch(
+        `/api/qr-codes?qrCodeKey=${encodeURIComponent(qrCode.qrCodeKey)}`,
+        { method: 'DELETE' }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Failed to delete QR code');
+      setQrCodes(current => current.filter(item => item.qrCodeKey !== qrCode.qrCodeKey));
+      if (qrResult?.qrCodeKey === qrCode.qrCodeKey) setQrResult(null);
+      setSuccessMessage('QR code deleted successfully.');
+    } catch (err) {
+      setError(err.message || 'Failed to delete QR code');
+    } finally {
+      setDeletingQrCodeKey(null);
+    }
   };
 
   // ── Email chip helpers ───────────────────────────────
@@ -346,6 +392,7 @@ export default function SurveyDistributionPage() {
                   <th>Response Rate</th>
                   <th>Status</th>
                   <th>Date Sent</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -369,6 +416,21 @@ export default function SurveyDistributionPage() {
                       </td>
                       <td>{statusPill(d.status)}</td>
                       <td style={{ color: '#6B7280' }}>{d.start_date}</td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDistribution(d)}
+                          disabled={deletingDistributionId === d.distribution_id}
+                          style={{
+                            background: 'none', border: 'none', padding: 0,
+                            color: '#DC2626', fontSize: '13px', fontWeight: 600,
+                            cursor: deletingDistributionId === d.distribution_id ? 'wait' : 'pointer',
+                            opacity: deletingDistributionId === d.distribution_id ? 0.55 : 1,
+                          }}
+                        >
+                          {deletingDistributionId === d.distribution_id ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -670,7 +732,6 @@ export default function SurveyDistributionPage() {
                   <th>Description</th>
                   <th>Template</th>
                   <th>Scans</th>
-                  <th>Unique</th>
                   <th>Conversions</th>
                   <th>Rate</th>
                   <th>Status</th>
@@ -688,7 +749,6 @@ export default function SurveyDistributionPage() {
                       {qr.templateTitle || '—'}
                     </td>
                     <td>{qr.stats.totalScans}</td>
-                    <td>{qr.stats.uniqueIPs}</td>
                     <td>{qr.stats.conversions}</td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -736,6 +796,19 @@ export default function SurveyDistributionPage() {
                           }}
                         >
                           Copy Link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteQrCode(qr)}
+                          disabled={deletingQrCodeKey === qr.qrCodeKey}
+                          style={{
+                            background: 'none', border: 'none', padding: 0,
+                            color: '#DC2626', fontSize: '13px', fontWeight: 600,
+                            cursor: deletingQrCodeKey === qr.qrCodeKey ? 'wait' : 'pointer',
+                            opacity: deletingQrCodeKey === qr.qrCodeKey ? 0.55 : 1,
+                          }}
+                        >
+                          {deletingQrCodeKey === qr.qrCodeKey ? 'Deleting…' : 'Delete'}
                         </button>
                       </div>
                     </td>

@@ -87,10 +87,11 @@ export default function TopBar({ title }) {
     const timeoutId = setTimeout(() => {
       fetchNotifications();
     }, 0);
-    const interval = setInterval(fetchNotifications, 30000);
+    // Notification polling is temporarily disabled.
+    // const interval = setInterval(fetchNotifications, 30000);
     return () => {
       clearTimeout(timeoutId);
-      clearInterval(interval);
+      // clearInterval(interval);
     };
   }, [fetchNotifications]);
 

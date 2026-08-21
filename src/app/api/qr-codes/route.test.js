@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/server-auth', () => ({
   requireAuth: requirePermissionMock,
 }));
 
-import { GET } from '@/app/api/qr-codes/route';
+import { GET, DELETE } from '@/app/api/qr-codes/route';
 
 describe('/api/qr-codes GET', () => {
   beforeEach(() => {
@@ -47,7 +47,6 @@ describe('/api/qr-codes GET', () => {
           is_active: 1,
           template_title: null,
           total_scans: 4,
-          unique_ips: 2,
           conversions: 1,
           last_scanned_at: '2026-03-02T00:00:00.000Z',
         },
@@ -62,5 +61,22 @@ describe('/api/qr-codes GET', () => {
     expect(payload.qrCodes).toHaveLength(1);
     expect(payload.qrCodes[0].stats.conversionRate).toBe(25);
     expect(payload.qrCodes[0].isActive).toBe(true);
+  });
+
+  test('DELETE removes a QR code by key', async () => {
+    requirePermissionMock.mockReturnValue({ user: { email: 'staff@example.com' } });
+    const deleteRun = vi.fn();
+    prepareMock.mockImplementation((sql) => {
+      if (sql.includes('SELECT qr_code_id')) {
+        return { get: vi.fn(() => ({ qr_code_id: 10, qr_code_key: 'qr_abc', qr_type: 'survey_template', target_id: 4 })) };
+      }
+      if (sql.includes('DELETE FROM qr_codes')) return { run: deleteRun };
+      return { run: vi.fn() };
+    });
+
+    const res = await DELETE(new Request('http://localhost:3000/api/qr-codes?qrCodeKey=qr_abc', { method: 'DELETE' }));
+    expect(res.status).toBe(200);
+    expect(deleteRun).toHaveBeenCalledWith(10);
+    expect(await res.json()).toEqual({ success: true, qrCodeKey: 'qr_abc' });
   });
 });
