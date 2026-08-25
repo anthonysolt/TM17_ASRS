@@ -157,17 +157,12 @@ export default function LoginPage() {
             backgroundColor: '#f5f5f5', borderRadius: 8,
             fontSize: '0.85rem', lineHeight: '1.6',
           }}>
-            <strong>Test Accounts:</strong>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <strong>Test Account:</strong>
+            <div style={{ marginTop: '0.5rem' }}>
               <div style={testAccountCardStyle}>
                 <div style={{ fontWeight: '600', color: '#c0392b', marginBottom: '0.25rem' }}>Admin</div>
                 <div>Email: <code style={{ fontSize: '0.8rem' }}>admin@test.com</code></div>
-                <div>Password: <code style={{ fontSize: '0.8rem' }}>admin123</code></div>
-              </div>
-              <div style={testAccountCardStyle}>
-                <div style={{ fontWeight: '600', color: '#E67E22', marginBottom: '0.25rem' }}>Staff</div>
-                <div>Email: <code style={{ fontSize: '0.8rem' }}>staff@test.com</code></div>
-                <div>Password: <code style={{ fontSize: '0.8rem' }}>staff123</code></div>
+                <div>Password: <code style={{ fontSize: '0.8rem' }}>temporary1!</code></div>
               </div>
             </div>
           </div>

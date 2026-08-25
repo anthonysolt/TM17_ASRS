@@ -1,67 +1,67 @@
 INSTALLATION INSTRUCTIONS - TM17_ASRS
 
-macOS (Homebrew)
+macOS (Using Homebrew)
 ------------------
-1) Install Homebrew (if not installed):
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+All commands are denoted with a '#' symbol, these commands should be ran in the terminal of your machine
+ 
+0) Install the zip fie for the code from the github repository.
 
-2) Install Node.js and PostgreSQL, start Postgres:
-brew update
-brew install node postgresql
-brew services start postgresql
+1) Open your terminal and install Homebrew:
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-3) Verify installations:
-psql --version
-node --version
+2) Install Node.js and PostgreSQL. Activate Postgres:
+#   brew update
+#   brew install node postgresql
+#   brew services start postgresql
 
-4) Create role and database (run as a postgres superuser):
-psql postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
-psql postgres -c "CREATE DATABASE asrs OWNER asrs;"
+3) Open new terminal window and verify your installations. This should return the version number of the appliations you installed. Close this newly made terminal. 
+#   psql --version
+#   node --version
 
-5) Restore provided dump into the database (from repo root):
-pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs database/local_snapshot.dump --no-owner --no-acl
+4) Create role and database instance for the application (run as a postgres superuser):
+#   psql postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
+#   psql postgres -c "CREATE DATABASE asrs OWNER asrs;"
 
-6) Verify tables:
-set -a; [ ! -f .env.local ] || . ./.env.local; set +a
-psql "$DATABASE_URL" -c "\dt"
+5) Navigate to the directory where the applications code is stored (TM17 folder), execute the following command to load the most recent content from the DB
+#   pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs /database/local_snapshot.dump --no-owner --no-acl
 
-7) Install dependencies and run app:
+7) Open a new  terminal window, navigate to the TM17 folder. Install dependencies and run the app:
 npm install
 npm run dev
 
-Optional: use the repo scripts to build schema + seed if not using dump:
-npm run db:setup
+8) Once the application is running, open your browser and go to localhost.com:3000/  to use the application
 
 Windows (winget)
 ------------------
-Run PowerShell as Administrator for installs and service control.
+All commands are denoted with a '#' symbol, these commands should be ran in the powershell terminal of your machine
+When running powershell, please run it as Administrator for installs and service control.
+
+0) Install the zip fie for the code from the github repository.
 
 1) Install Node.js and PostgreSQL with winget:
-winget install --id OpenJS.NodeJS -e
-winget install --id PostgreSQL.PostgreSQL -e
+#   winget install --id OpenJS.NodeJS -e
+#   winget install --id PostgreSQL.PostgreSQL -e
 
 2) Start PostgreSQL service (service name may vary):
-# Use Services app or run an example command (adjust version):
-net start postgresql-x64-15
+#   net start postgresql-x64-15
 
-3) Verify installations in PowerShell:
-psql --version
-node --version
+3) Open a seperate powershell window, Verify installations in PowerShell. This should give you a version number of the appliations you installed:
+#   psql --version
+#   node --version
 
 4) Create role and database (run as postgres user):
-psql -U postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
-psql -U postgres -c "CREATE DATABASE asrs OWNER asrs;"
+#   psql -U postgres -c "CREATE ROLE asrs WITH LOGIN PASSWORD 'change-me';"
+#   psql -U postgres -c "CREATE DATABASE asrs OWNER asrs;"
 
-5) Restore provided dump (from repo root):
-pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs .\database\local_snapshot.dump --no-owner --no-acl
+5) Navigate to the TM17 folder that you installed, Execute the following command to load the latest DB data. 
+#   pg_restore --dbname=postgresql://asrs:change-me@localhost:5432/asrs .\database\local_snapshot.dump --no-owner --no-acl
 
-6) Verify tables (load DATABASE_URL from .env.local):
-$env:DATABASE_URL = (Get-Content .env.local | Select-String -Pattern '^DATABASE_URL=' | ForEach-Object { $_ -replace '^DATABASE_URL=' , '' })
-psql $env:DATABASE_URL -c "\dt"
 
-7) Install dependencies and run app:
-npm install
-npm run dev
+7) Open a seperate powershell window and navigate to the TM17 folder. Install dependencies and run app:
+#   npm install
+#   npm run dev
+
+8) Once the application is running, open your browser and go to localhost.com:3000/  to use the application
 
 Notes & Troubleshooting
 - The repo uses `DATABASE_URL` in `.env.local` (example: DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs).
