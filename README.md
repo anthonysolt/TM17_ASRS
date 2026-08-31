@@ -1,98 +1,118 @@
-# TM17 ASRS
+# ASRS Setup Instructions
 
-Next.js application for survey submission, reporting, and administrative workflows. The application uses PostgreSQL for persistent data.
+A comprehensive guide to setting up the ASRS project locally.
 
-## Getting Started: Installation & Setup
+## Prerequisites
 
-Before running the TM17 ASRS platform, you'll need to install the following prerequisites and configure your database. 
-- Node.js 22 or newer
-- PostgreSQL 14 or newer, running locally or reachable over the network
-- Brew & npm for package installation
+- Windows Host machine
+- Administrative access for VirtualBox and PostgreSQL installation
 
-### 1. Install Node.js
+## Installation Steps
 
-Install **Node.js 22 or newer**. Verify your version with:
-```bash
-node -v
-```
-If you need to install or upgrade, download it from [nodejs.org](https://nodejs.org) or use a version manager like `nvm`.
+### Step 1: Install VirtualBox
 
-### 2. Install PostgreSQL
+Download VirtualBox from the official website (select the Windows Host version):
 
-Install **PostgreSQL 14 or newer**, either locally or have access to a remotely hosted instance. Verify your version with:
-```bash
-psql --version
-```
-If it's not installed, get it from [postgresql.org](https://www.postgresql.org/download/) or via your system's package manager (e.g., `brew install postgresql` on macOS, `apt install postgresql` on Ubuntu).
+[https://www.virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads)
 
-### 3. Install Project Dependencies
+### Step 2: Download Ubuntu ISO Image
 
-Once Node.js is ready, install the application's required libraries by running the following from the project root:
-```bash
-npm install
-```
-This reads the project's `package.json` and pulls in all Next.js and other library dependencies needed to run the platform.
+Download the Ubuntu ISO image:
 
-## PostgreSQL setup
+[https://releases.ubuntu.com/noble/](https://releases.ubuntu.com/noble/)
 
-Start up PostgreSQL:
+### Step 3: Download TM17 Code
+
+Clone or download the TM17 ASRS repository:
+
+[https://github.com/anthonysolt/TM17_ASRS](https://github.com/anthonysolt/TM17_ASRS)
+
+### Step 4: Install PostgreSQL
+
+Update your system packages:
 
 ```bash
-brew services start postgresql@18
+sudo apt update
+sudo apt install -y postgresql-common
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+sudo apt update
+sudo apt install -y postgresql-18 postgresql-client-18
+sudo systemctl start postgresql
 ```
 
-Connect to the PostgreSQL DB:
-```bash
-psql postgresql://asrs:change-me@localhost:5432/asrs
+**Configure Environment Variables:**
+
+Edit the `.env.local` file and add:
+
 ```
-Create an application user and database. From a PostgreSQL administrator shell:
-
-```sql
-CREATE USER asrs WITH PASSWORD 'change-me';
-CREATE DATABASE asrs OWNER asrs;
-```
-
-Create `.env.local` in the project root (or copy `.env.example`) and set the connection string:
-
-```env
 DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs
 ```
 
-For a managed database that requires TLS, add `?sslmode=require` to the URL:
+### Step 5: Initialize Database
 
-```env
-DATABASE_URL=postgresql://asrs:change-me@db.example.com:5432/asrs?sslmode=require
-```
-
-Do not commit `.env.local` or a real password.
-
-## Initialize the database with data
-
-Schema and seed data are applied explicitly; the application does not create or
-alter database objects during startup.
+Connect to PostgreSQL and set up the database:
 
 ```bash
-npm run db:setup
+sudo -u postgres psql
 ```
 
-This runs [`database/schema.sql`](database/schema.sql) followed by
-[`database/seed.sql`](database/seed.sql). Run it once for a new, empty database.
-The seed creates an administrator account:
+Then execute the following SQL commands:
 
-Change this temporary password after signing in.
+```sql
+CREATE USER asrs WITH PASSWORD 'change-me';
+CREATE DATABASE asrs;
+GRANT ALL PRIVILEGES ON DATABASE asrs TO asrs;
+\c asrs
+GRANT ALL ON SCHEMA public TO asrs;
+\q
+```
 
-## Launch Platform locally
+Restore the database from backup:
+
+```bash
+sudo -u postgres psql -h localhost -U asrs -d asrs < asrs_db.sql
+```
+
+### Step 6: Install Node.js and npm
+
+Update system and install Node Version Manager (nvm):
+
+```bash
+sudo apt update
+sudo apt install curl
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.7/install.sh | bash
+```
+
+Install Node.js and npm:
+
+```bash
+nvm install node 26
+npm install -g npm@12.0.2
+```
+
+### Step 7: Run the Application
 
 Install dependencies and start the development server:
 
 ```bash
 npm install
+npm audit fix --force
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+## Troubleshooting
 
-## Useful commands
+### Turbopack Error
+
+If you encounter a turbopack error, clear the cache and reinstall:
+
+```bash
+rm -rf .next node_modules && npm install
+```
+
+## Support
+
+For issues or questions, please open an issue on the [GitHub repository](https://github.com/anthonysolt/TM17_ASRS).
 
 ```bash
 npm run dev    # development server
@@ -102,7 +122,3 @@ npm run start  # serve a production build
 npm test       # test suite
 npm run lint   # lint source files
 ```
-
-## Deployment
-
-Set `DATABASE_URL` in the deployment provider's server-side environment configuration before starting the application. The database user needs permission to create and alter the application tables during initialization.
