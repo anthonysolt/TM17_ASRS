@@ -1,3 +1,6 @@
+# 1.10 Fixes
+- Fixed Title for Goal Metrics
+
 # ASRS Setup Instructions
 
 A comprehensive guide to setting up the ASRS project locally.
