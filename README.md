@@ -1,3 +1,47 @@
+# Launching New Fixes
+
+If you would like to test the new fixes, follow these steps:
+
+## 1. Download Git
+
+Open a terminal window and run:
+
+```bash
+sudo apt install git
+```
+
+Verify the installation by checking the version number:
+
+```bash
+git -v
+```
+
+## 2. Update TM17 Folder with New Code
+
+Open your TM17 folder, right-click, and select "Open in Terminal".
+
+Run the following commands:
+
+```bash
+git init
+git remote add origin https://github.com/anthonysolt/TM17_ASRS.git
+git fetch origin
+git checkout -f TM171-1.10
+git reset --hard origin/TM17-1.10
+```
+
+Finally, launch the application:
+
+```bash
+npm run dev
+```
+
+Notes:
+
+    When in the VM, the commands can be copied from this GitHub repository: https://github.com/anthonysolt/TM17_ASRS/tree/TM17-1.10 
+    If these steps fail, you can repeat the initial installation instructions with the zip file downloaded from the link above.
+    If you run into a connection error, ensure that you have a .env.local file with the correct DB link. 
+
 # 1.10 Fixes
 - Fixed Title for Goal Metrics
 - Archiving error with Initiatives -- "Missing required field - name" 
