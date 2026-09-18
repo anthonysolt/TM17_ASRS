@@ -37,10 +37,9 @@ npm run dev
 ```
 
 Notes:
-
-    When in the VM, the commands can be copied from this GitHub repository: https://github.com/anthonysolt/TM17_ASRS/tree/TM17-1.10 
-    If these steps fail, you can repeat the initial installation instructions with the zip file downloaded from the link above.
-    If you run into a connection error, ensure that you have a .env.local file with the correct DB link. 
+- When in the VM, the commands can be copied from this GitHub repository: https://github.com/anthonysolt/TM17_ASRS/tree/TM17-1.10 
+- If these steps fail, you can repeat the initial installation instructions with the zip file downloaded from the link above.
+- If you run into a connection error, ensure that you have a .env.local file with the correct DB link. 
 
 # 1.10 Fixes
 - Fixed Title for Goal Metrics
