@@ -1,5 +1,15 @@
 # 1.10 Fixes
 - Fixed Title for Goal Metrics
+- Archiving error with Initiatives -- "Missing required field - name" 
+- Investigate only being able to view one report for the Initiatives tab on the Reports tab
+- Percentage Balancing for Goals and their weight
+- Rounding error on the percentage values
+- Rounding error on the percentage values
+- Create Goal Error catching -- throw error when all fields not filled out
+- Red Error Messages
+- Add Progress Bar for each independent goal 
+- Title for Metric for Goal scoring
+- QR Codes generated are not showing when created in the distribution tab
 
 # ASRS Setup Instructions
 
