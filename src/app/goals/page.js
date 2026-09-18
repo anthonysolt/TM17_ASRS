@@ -1,26 +1,61 @@
 'use client';
 
 import PageLayout from '@/components/PageLayout';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import { getScoreColor } from '@/lib/score-utils';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 
+/** Keep user-entered goal weights within the supported percentage range. */
+function clampWeight(value) {
+  if (value === '') return '';
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return value;
+  return String(Math.min(100, Math.max(0, numericValue)));
+}
+
+/** Calculate raw progress toward a goal independently of its scoring method. */
+function getGoalProgress(goal) {
+  const currentValue = Number(goal.current_value);
+  const targetValue = Number(goal.target_value);
+
+  if (!Number.isFinite(currentValue) || !Number.isFinite(targetValue) || targetValue <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, (currentValue / targetValue) * 100);
+}
+
+/** Display percentages with no more than two decimal places. */
+function formatPercentage(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '0';
+
+  return numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 export default function GoalsPage() {
+  // ---------------------------------------------------------------------------
+  // Page state
+  // ---------------------------------------------------------------------------
   const router = useRouter();
   const { user } = useAuthStore();
+
+  // Initiative and goal data loaded from the goals API.
   const [initiatives, setInitiatives] = useState([]);
   const [selectedInitiative, setSelectedInitiative] = useState('');
   const [goals, setGoals] = useState([]);
   const [overallScore, setOverallScore] = useState(0);
+
+  // Page-level UI state and user feedback.
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingGoalId, setEditingGoalId] = useState(null);
   const [message, setMessage] = useState('');
 
-  // New goal form state
+  // Form values are stored as strings so number fields can temporarily be empty.
   const [newGoal, setNewGoal] = useState({
     goal_name: '',
     description: '',
@@ -32,33 +67,22 @@ export default function GoalsPage() {
     deadline: '',
   });
 
-  // Edit form state (expected_updated_at = version when edit started; US-035 concurrency)
+  // The edit timestamp supports optimistic concurrency conflict detection (US-035).
   const [editGoal, setEditGoal] = useState({});
   const [editBaselineUpdatedAt, setEditBaselineUpdatedAt] = useState('');
 
-  // Auth check: staff or admin required
+  // ---------------------------------------------------------------------------
+  // Authorization and data loading
+  // ---------------------------------------------------------------------------
+
+  // Only staff and administrators may manage initiative goals.
   useEffect(() => {
     if (user && user.user_type !== 'admin' && user.user_type !== 'staff') {
       router.push('/');
     }
   }, [user, router]);
 
-  // Fetch initiatives on mount
-  useEffect(() => {
-    fetchInitiatives();
-  }, []);
-
-  // Fetch goals when initiative changes
-  useEffect(() => {
-    if (selectedInitiative) {
-      fetchGoals(selectedInitiative);
-    } else {
-      setGoals([]);
-      setOverallScore(0);
-    }
-  }, [selectedInitiative]);
-
-  async function fetchInitiatives() {
+  const fetchInitiatives = useCallback(async () => {
     try {
       const res = await apiFetch('/api/goals/initiatives');
       if (res.status === 401 || res.status === 403) {
@@ -73,9 +97,9 @@ export default function GoalsPage() {
       console.error(err);
       setError('Failed to load initiatives');
     }
-  }
+  }, [router]);
 
-  async function fetchGoals(initiativeId) {
+  const fetchGoals = useCallback(async (initiativeId) => {
     try {
       setIsLoading(true);
       setError(null);
@@ -95,8 +119,28 @@ export default function GoalsPage() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [router]);
 
+  // Load the initiative selector when the page mounts.
+  useEffect(() => {
+    fetchInitiatives();
+  }, [fetchInitiatives]);
+
+  // Keep goal data and the overall score synchronized with the selection.
+  useEffect(() => {
+    if (selectedInitiative) {
+      fetchGoals(selectedInitiative);
+    } else {
+      setGoals([]);
+      setOverallScore(0);
+    }
+  }, [selectedInitiative, fetchGoals]);
+
+  // ---------------------------------------------------------------------------
+  // Goal mutations
+  // ---------------------------------------------------------------------------
+
+  /** Create a goal and reload the initiative's complete scoring configuration. */
   async function handleAddGoal(e) {
     e.preventDefault();
     setMessage('');
@@ -139,6 +183,10 @@ export default function GoalsPage() {
     }
   }
 
+  /**
+   * Save edits using the timestamp captured when editing began. Weight changes
+   * are proportionally rebalanced across peer goals by the API.
+   */
   async function handleUpdateGoal(goalId) {
     setMessage('');
 
@@ -180,6 +228,7 @@ export default function GoalsPage() {
     }
   }
 
+  /** Delete a goal after explicit confirmation, then refresh aggregate scores. */
   async function handleDeleteGoal(goalId) {
     if (!confirm('Are you sure you want to delete this goal?')) return;
     setMessage('');
@@ -199,6 +248,7 @@ export default function GoalsPage() {
     }
   }
 
+  /** Copy a persisted goal into the controlled edit form. */
   function startEditing(goal) {
     setEditingGoalId(goal.goal_id);
     setEditBaselineUpdatedAt(goal.updated_at != null ? String(goal.updated_at) : '');
@@ -214,6 +264,11 @@ export default function GoalsPage() {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Scoring display helpers
+  // ---------------------------------------------------------------------------
+
+  /** Convert the stored scoring identifier into a user-facing explanation. */
   function getScoringLabel(method) {
     switch (method) {
       case 'linear': return 'Linear (proportional)';
@@ -223,17 +278,40 @@ export default function GoalsPage() {
     }
   }
 
-  function getStatusBadge(score) {
-    if (score >= 100) {
-      return <span className="pill pill-blue">Exceeding</span>;
-    } else if (score >= 70) {
+  /** Build a status badge, including value-aware threshold goal states. */
+  function getStatusBadge(goal) {
+    if (goal.scoring_method === 'threshold') {
+      const currentValue = Number(goal.current_value);
+      const targetValue = Number(goal.target_value);
+
+      if (currentValue < targetValue) {
+        return <span className="pill pill-yellow">Not Met</span>;
+      }
+      if (currentValue === targetValue) {
+        return <span className="pill pill-green">Reached</span>;
+      }
+      return <span className="pill pill-green">Exceeded</span>;
+    }
+
+    if (goal.score >= 100) {
+      return <span className="pill pill-blue">Exceeded</span>;
+    } else if (goal.score >= 70) {
       return <span className="pill pill-green">On Track</span>;
     } else {
-      return <span className="pill pill-yellow">Below</span>;
+      return <span className="pill pill-yellow">Not Met</span>;
     }
   }
 
-  // Ring progress SVG helper
+  /** Linear and threshold goals remain visually highlighted until fully met. */
+  function isUnmetWeightedGoal(goal) {
+    return ['linear', 'threshold'].includes(goal.scoring_method) && Number(goal.score) < 100;
+  }
+
+  function getGoalTabColor(goal) {
+    return isUnmetWeightedGoal(goal) ? '#F59E0B' : getScoreColor(goal.score);
+  }
+
+  /** Render the compact progress indicator used by target metric cards. */
   function RingProgress({ score, size = 80 }) {
     const radius = (size - 12) / 2;
     const circumference = 2 * Math.PI * radius;
@@ -266,6 +344,10 @@ export default function GoalsPage() {
       </svg>
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Page rendering
+  // ---------------------------------------------------------------------------
 
   return (
     <PageLayout title="Goals & Scoring">
@@ -409,7 +491,7 @@ export default function GoalsPage() {
                 />
               </div>
               <div>
-                <label style={labelStyle}>Target Metric *</label>
+                <label style={labelStyle}>Goal Metric *</label>
                 <input
                   type="text"
                   value={newGoal.target_metric}
@@ -470,11 +552,11 @@ export default function GoalsPage() {
                 <label style={labelStyle}>Weight (%) *</label>
                 <input
                   type="number"
-                  step="any"
-                  min="1.01"
-                  max="99.99"
+                  step="0.01"
+                  min="0"
+                  max="100"
                   value={newGoal.weight}
-                  onChange={(e) => setNewGoal({ ...newGoal, weight: e.target.value })}
+                  onChange={(e) => setNewGoal({ ...newGoal, weight: clampWeight(e.target.value) })}
                   placeholder="2"
                   required
                   style={inputStyle}
@@ -512,17 +594,22 @@ export default function GoalsPage() {
       {selectedInitiative && !isLoading && goals.length > 0 && (
         <>
           {/* Scoring Criteria card */}
-          <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card goal-list-section" style={{ marginBottom: 24 }}>
             <div className="card-header">
-              <span className="card-title">Scoring Criteria</span>
+              <div>
+                <div className="card-title">Scoring Criteria</div>
+                <div className="goal-list-subtitle">Each goal contributes independently to the initiative score.</div>
+              </div>
+              <span className="goal-list-count">{goals.length} {goals.length === 1 ? 'goal' : 'goals'}</span>
             </div>
-            <table className="data-table">
+            <table className="data-table goal-list-table">
               <thead>
                 <tr>
-                  <th>Metric</th>
+                  <th>Goal</th>
                   <th>Weight (%)</th>
-                  <th>Target</th>
-                  <th>Current</th>
+                  <th>Target Value</th>
+                  <th>Current Value</th>
+                  <th>Goal Progress</th>
                   <th>Status</th>
                   <th style={{ width: 120 }}>Actions</th>
                 </tr>
@@ -531,8 +618,8 @@ export default function GoalsPage() {
                 {goals.map((goal) =>
                   editingGoalId === goal.goal_id ? (
                     /* ---- Edit Mode Row ---- */
-                    <tr key={goal.goal_id}>
-                      <td colSpan={6} style={{ padding: 0 }}>
+                    <tr key={goal.goal_id} className="goal-list-row goal-list-row-editing">
+                      <td colSpan={7} style={{ padding: 0 }}>
                         <div style={{ padding: '20px 16px', background: '#FAFAFA', borderRadius: 8 }}>
                           <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: 'var(--color-text-primary)' }}>
                             Editing: {goal.goal_name}
@@ -600,11 +687,11 @@ export default function GoalsPage() {
                               <label style={labelStyle}>Weight (%)</label>
                               <input
                                 type="number"
-                                step="any"
-                                min="1.01"
-                                max="99.99"
+                                step="0.01"
+                                min="0"
+                                max="100"
                                 value={editGoal.weight}
-                                onChange={(e) => setEditGoal({ ...editGoal, weight: e.target.value })}
+                                onChange={(e) => setEditGoal({ ...editGoal, weight: clampWeight(e.target.value) })}
                                 style={inputStyle}
                               />
                             </div>
@@ -638,9 +725,16 @@ export default function GoalsPage() {
                         </div>
                       </td>
                     </tr>
-                  ) : (
+                  ) : (() => {
+                    const progress = getGoalProgress(goal);
+
+                    return (
                     /* ---- Display Mode Row ---- */
-                    <tr key={goal.goal_id}>
+                    <tr
+                      key={goal.goal_id}
+                      className="goal-list-row"
+                      style={{ '--goal-accent': getGoalTabColor(goal) }}
+                    >
                       <td>
                         <div style={{ fontWeight: 500, color: 'var(--color-text-primary)', marginBottom: 2 }}>
                           {goal.goal_name}
@@ -656,7 +750,7 @@ export default function GoalsPage() {
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{goal.weight}%</span>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{formatPercentage(goal.weight)}%</span>
                           <div style={{ width: 80, height: 4, backgroundColor: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
                             <div
                               style={{
@@ -675,7 +769,22 @@ export default function GoalsPage() {
                           {goal.current_value}
                         </span>
                       </td>
-                      <td>{getStatusBadge(goal.score)}</td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{formatPercentage(progress)}%</span>
+                          <div style={{ width: 80, height: 4, backgroundColor: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
+                            <div
+                              style={{
+                                width: `${Math.min(progress, 100)}%`,
+                                height: '100%',
+                                backgroundColor: getScoreColor(progress),
+                                borderRadius: 2,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td>{getStatusBadge(goal)}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
@@ -705,7 +814,8 @@ export default function GoalsPage() {
                         </div>
                       </td>
                     </tr>
-                  )
+                    );
+                  })()
                 )}
               </tbody>
             </table>
@@ -727,18 +837,18 @@ export default function GoalsPage() {
                 <div
                   key={goal.goal_id}
                   style={{
-                    border: '1px solid var(--color-border)',
+                    border: `1px solid ${getGoalTabColor(goal)}`,
                     borderRadius: 12,
                     padding: 20,
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: 'center',
                     gap: 8,
-                    background: '#FAFAFA',
+                    background: isUnmetWeightedGoal(goal) ? '#FFFBEB' : '#FAFAFA',
                     transition: 'border-color 150ms ease',
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-border-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = getGoalTabColor(goal); }}
                 >
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', textAlign: 'center', marginBottom: 4 }}>
                     {goal.goal_name}
@@ -782,7 +892,7 @@ export default function GoalsPage() {
                   </div>
 
                   <div style={{ marginTop: 4 }}>
-                    {getStatusBadge(goal.score)}
+                    {getStatusBadge(goal)}
                   </div>
                 </div>
               ))}
@@ -804,7 +914,7 @@ export default function GoalsPage() {
   );
 }
 
-// Shared form field styles
+// Shared styles keep create and edit controls visually consistent.
 const labelStyle = {
   display: 'block',
   color: 'var(--color-text-primary)',

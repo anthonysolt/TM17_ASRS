@@ -16,7 +16,11 @@ function sameUpdatedAt(clientVal, serverVal) {
 
 function isValidWeight(weight) {
   const numericWeight = Number(weight);
-  return Number.isFinite(numericWeight) && numericWeight > 1 && numericWeight < 100;
+  const hundredths = numericWeight * 100;
+  return Number.isFinite(numericWeight)
+    && numericWeight >= 0
+    && numericWeight <= 100
+    && Math.abs(hundredths - Math.round(hundredths)) < 1e-8;
 }
 
 // Compute overall weighted score across all goals
@@ -119,7 +123,7 @@ export async function POST(request) {
     } = body;
 
     // Validate required fields
-    if (!initiative_id || !goal_name || !target_metric || target_value == null || !weight || !scoring_method) {
+    if (!initiative_id || !goal_name || !target_metric || target_value == null || weight == null || weight === '' || !scoring_method) {
       return NextResponse.json(
         { error: 'Missing required fields: initiative_id, goal_name, target_metric, target_value, weight, scoring_method' },
         { status: 400 }
@@ -134,10 +138,10 @@ export async function POST(request) {
       );
     }
 
-    // Weight must be strictly between 1 and 100
+    // Weight must stay within the percentage range.
     if (!isValidWeight(weight)) {
       return NextResponse.json(
-        { error: 'Weight must be greater than 1 and less than 100' },
+        { error: 'Weight must be between 0 and 100 with no more than two decimal places' },
         { status: 400 }
       );
     }
@@ -201,6 +205,7 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
+      adjustedGoals: result.adjustedGoals,
       goal: {
         ...newGoal,
         score: parseFloat(computeGoalScore(newGoal).toFixed(2)),

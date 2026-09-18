@@ -13,7 +13,11 @@ const ALLOWED_FIELDS = [
 
 function isValidWeight(weight) {
   const numericWeight = Number(weight);
-  return Number.isFinite(numericWeight) && numericWeight >= 1 && numericWeight <= 100;
+  const hundredths = numericWeight * 100;
+  return Number.isFinite(numericWeight)
+    && numericWeight >= 0
+    && numericWeight <= 100
+    && Math.abs(hundredths - Math.round(hundredths)) < 1e-8;
 }
 
 function computeGoalScore(goal) {
@@ -31,6 +35,58 @@ function computeGoalScore(goal) {
   }
 }
 
+function rebalanceGoalWeights(db, existing, requestedWeight) {
+  const peers = db.prepare(`
+    SELECT goal_id, weight
+    FROM initiative_goal
+    WHERE initiative_id = ? AND goal_id <> ?
+    ORDER BY goal_id ASC
+  `).all(existing.initiative_id, existing.goal_id);
+
+  if (peers.length === 0) {
+    return { editedWeight: 100, adjustedGoals: [] };
+  }
+
+  const editedWeightUnits = Math.round(Number(requestedWeight) * 100);
+  const editedWeight = editedWeightUnits / 100;
+  const remainingWeightUnits = 10_000 - editedWeightUnits;
+  const peerWeightTotal = peers.reduce((sum, peer) => sum + Math.max(0, Number(peer.weight) || 0), 0);
+  const allocations = peers.map((peer) => {
+    const exactWeightUnits = peerWeightTotal > 0
+      ? remainingWeightUnits * (Math.max(0, Number(peer.weight) || 0) / peerWeightTotal)
+      : remainingWeightUnits / peers.length;
+
+    return {
+      goal_id: peer.goal_id,
+      weightUnits: Math.floor(exactWeightUnits),
+      remainder: exactWeightUnits - Math.floor(exactWeightUnits),
+    };
+  });
+
+  const unitsToAllocate = remainingWeightUnits - allocations.reduce((sum, allocation) => sum + allocation.weightUnits, 0);
+  const allocationPriority = [...allocations].sort((a, b) =>
+    b.remainder - a.remainder || a.goal_id - b.goal_id
+  );
+
+  for (let index = 0; index < unitsToAllocate; index += 1) {
+    allocationPriority[index].weightUnits += 1;
+  }
+
+  const adjustedGoals = allocations.map(({ goal_id, weightUnits }) => {
+    const weight = weightUnits / 100;
+
+    db.prepare(`
+      UPDATE initiative_goal
+      SET weight = ?, updated_at = datetime('now')
+      WHERE goal_id = ?
+    `).run(weight, goal_id);
+
+    return { goal_id, weight };
+  });
+
+  return { editedWeight, adjustedGoals };
+}
+
 /**
  * Apply a partial patch to an initiative_goal row. Records progress history when current_value changes.
  * @param {{ prepare(sql: string): { get(...values: unknown[]): unknown, run(...values: unknown[]): unknown } }} db
@@ -45,7 +101,14 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
     return { error: 'Invalid scoring_method. Must be: linear, threshold, or binary' };
   }
   if (updates.weight !== undefined && !isValidWeight(updates.weight)) {
-    return { error: 'Weight must be greater than 1 and less than 100' };
+    return { error: 'Weight must be between 0 and 100 with no more than two decimal places' };
+  }
+
+  let adjustedGoals = [];
+  if (updates.weight !== undefined && Number(updates.weight) !== Number(existing.weight)) {
+    const rebalanced = rebalanceGoalWeights(db, existing, updates.weight);
+    updates = { ...updates, weight: rebalanced.editedWeight };
+    adjustedGoals = rebalanced.adjustedGoals;
   }
 
   const setClauses = [];
@@ -102,6 +165,7 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
       goal_name: updatedGoal.goal_name,
       initiative_id: updatedGoal.initiative_id,
       changes,
+      adjusted_goal_weights: adjustedGoals,
     },
   });
 
@@ -120,7 +184,7 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
     });
   }
 
-  return { goal: updatedGoal };
+  return { goal: updatedGoal, adjustedGoals };
 }
 
-export { ALLOWED_FIELDS, computeGoalScore };
+export { ALLOWED_FIELDS, computeGoalScore, rebalanceGoalWeights };

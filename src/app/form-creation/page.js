@@ -365,11 +365,11 @@ export default function FormCreationPage() {
                       <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: '600' }}>required</span>
                     )}
                   </div>
-
                   <input
-                    value={sf.field_label}
-                    onChange={e => updateFieldConfig(sf.field_id, 'field_label', e.target.value)}
-                    placeholder="Enter question text..."
+                    // id={`question-title-${sf.field_id}`}
+                    // value={sf.field_label}
+                    // onChange={e => updateFieldConfig(sf.field_id, 'field_label', e.target.value)}
+                    placeholder="Enter question title:"
                     style={{
                       fontWeight: '600',
                       fontSize: '14px',

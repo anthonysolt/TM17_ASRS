@@ -227,11 +227,12 @@ export default function HistoricalReportsPage() {
     ? selectedIds.map((id) => reports.find((r) => r.id === id)).filter(Boolean)
     : [];
 
-  const STATUS_FILTERS = ['All', 'Published', 'Draft', 'Archived'];
+  const STATUS_FILTERS = ['All', 'Published', 'Unpublished', 'Archived'];
 
   const visibleReports = reports.filter((r) => {
     if (statusFilter === 'All') return true;
-    return (r.status || '').toLowerCase() === statusFilter.toLowerCase();
+    const selectedStatus = statusFilter === 'Unpublished' ? 'completed' : statusFilter.toLowerCase();
+    return (r.status || '').toLowerCase() === selectedStatus;
   });
 
   const monthGroups = groupByMonth(visibleReports);
@@ -258,7 +259,7 @@ export default function HistoricalReportsPage() {
     const s = (status || 'draft').toLowerCase();
     if (s === 'published') return { bg: '#D1FAE5', color: '#065F46', label: 'Published' };
     if (s === 'archived') return { bg: '#F3F4F6', color: '#6B7280', label: 'Archived' };
-    if (s === 'completed') return { bg: '#DBEAFE', color: '#1E40AF', label: 'Completed' };
+    if (s === 'completed') return { bg: '#FEF3C7', color: '#92400E', label: 'Unpublished' };
     return { bg: '#FEF3C7', color: '#92400E', label: 'Draft' };
   }
 
@@ -526,7 +527,7 @@ export default function HistoricalReportsPage() {
                         )}
                         {(r.status || '').toLowerCase() === 'published' && (
                           <button
-                            onClick={() => updateReportStatus(r.id, 'draft')}
+                            onClick={() => updateReportStatus(r.id, 'completed')}
                             style={{ fontSize: '0.83rem', fontWeight: 500, color: '#92400E', background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem 0' }}
                           >
                             Unpublish

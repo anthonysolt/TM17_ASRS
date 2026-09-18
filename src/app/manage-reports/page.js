@@ -176,22 +176,24 @@ export default function ManageReportsPage() {
 
   // ── Status pill helper ──
   function getStatusPillClass(status) {
-    if (status === 'completed' || status === 'published') return 'pill-green';
+    if (status === 'published') return 'pill-green';
+    if (status === 'completed') return 'pill-yellow';
     if (status === 'generating' || status === 'draft') return 'pill-yellow';
     if (status === 'failed' || status === 'archived') return 'pill-gray';
     return 'pill-gray';
   }
 
   // ── Filtered + sorted reports ──
-  const STATUS_FILTERS = ['All', 'Published', 'Draft', 'Archived'];
+  const STATUS_FILTERS = ['All', 'Published', 'Unpublished', 'Archived'];
 
   const filteredReports = reports
     .filter((r) => {
       const matchesSearch = !searchQuery ||
         (r.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (r.initiative_name || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const selectedStatus = statusFilter === 'Unpublished' ? 'completed' : statusFilter.toLowerCase();
       const matchesStatus = statusFilter === 'All' ||
-        (r.status || '').toLowerCase() === statusFilter.toLowerCase();
+        (r.status || '').toLowerCase() === selectedStatus;
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
@@ -419,15 +421,15 @@ export default function ManageReportsPage() {
                       fontWeight: 600,
                       textTransform: 'capitalize',
                       ...(
-                        (r.status === 'completed' || r.status === 'published')
+                        r.status === 'published'
                           ? { backgroundColor: '#D1FAE5', color: '#065F46' }
-                          : (r.status === 'generating' || r.status === 'draft')
+                          : (r.status === 'completed' || r.status === 'generating' || r.status === 'draft')
                           ? { backgroundColor: '#FEF3C7', color: '#92400E' }
                           : { backgroundColor: '#E5E7EB', color: '#374151' }
                       ),
                     }}
                   >
-                    {r.status || 'completed'}
+                    {r.status === 'completed' || !r.status ? 'Unpublished' : r.status}
                   </span>
 
                   {/* Action buttons */}
@@ -613,7 +615,7 @@ export default function ManageReportsPage() {
                   backgroundColor: '#F9FAFB',
                 }}
               >
-                <option value="completed">Completed</option>
+                <option value="completed">Unpublished</option>
                 <option value="generating">Generating</option>
                 <option value="failed">Failed</option>
               </select>

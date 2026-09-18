@@ -43,14 +43,18 @@ describe('/api/goals branch coverage', () => {
     expect(payload.goals).toHaveLength(4);
   });
 
-  test('POST covers invalid weight bounds, initiative missing, and success', async () => {
+  test('POST rejects over-precision and out-of-range weights, then covers success', async () => {
     const mkReq = (body) => new Request('http://localhost:3000/api/goals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-    const base = { initiative_id: 1, goal_name: 'G', target_metric: 'M', target_value: 10, weight: 2, scoring_method: 'linear' };
+    const base = { initiative_id: 1, goal_name: 'G', target_metric: 'M', target_value: 10, weight: 2.25, scoring_method: 'linear' };
 
-    expect((await POST(mkReq({ ...base, weight: 0 }))).status).toBe(400);
-    expect((await POST(mkReq({ ...base, weight: 1 }))).status).toBe(400);
-    expect((await POST(mkReq({ ...base, weight: 100 }))).status).toBe(400);
+    expect((await POST(mkReq({ ...base, weight: -0.01 }))).status).toBe(400);
+    expect((await POST(mkReq({ ...base, weight: 100.01 }))).status).toBe(400);
+    const overPrecisionResponse = await POST(mkReq({ ...base, weight: 12.345 }));
+    expect(overPrecisionResponse.status).toBe(400);
+    expect(await overPrecisionResponse.json()).toEqual({
+      error: 'Weight must be between 0 and 100 with no more than two decimal places',
+    });
 
     prepareMock.mockImplementation((sql) => {
       const query = String(sql || '');

@@ -1,7 +1,7 @@
 'use client';
 
 import PageLayout from '@/components/PageLayout';
-import { useState, useEffect, use } from 'react';
+import { Fragment, useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
@@ -551,8 +551,8 @@ export default function SurveyDetailPage({ params }) {
                     const isExpanded = expandedId === s.id;
                     const answers = s.responses?.templateAnswers || {};
                     return (
-                      <>
-                        <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : s.id)}>
+                      <Fragment key={s.id}>
+                        <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(isExpanded ? null : s.id)}>
                           <td style={{ color: '#6B7280', fontSize: '0.85rem' }}>#{s.id}</td>
                           <td style={{ fontWeight: 600, color: '#111827' }}>{s.name}</td>
                           <td style={{ color: '#6B7280' }}>{s.email}</td>
@@ -570,7 +570,7 @@ export default function SurveyDetailPage({ params }) {
                           </td>
                         </tr>
                         {isExpanded && (
-                          <tr key={`${s.id}-detail`}>
+                          <tr>
                             <td colSpan={5} style={{ padding: '1rem', backgroundColor: '#FAFAFA' }}>
                               <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#374151', marginBottom: '0.5rem' }}>Response Details</div>
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.5rem' }}>
@@ -598,7 +598,7 @@ export default function SurveyDetailPage({ params }) {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                 </tbody>

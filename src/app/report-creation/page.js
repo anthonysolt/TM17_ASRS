@@ -227,11 +227,14 @@ export default function ReportCreationPage() {
 
   const statusBadge = (status) => {
     const colors = {
-      completed: { bg: '#d1fae5', text: '#065f46', border: '#a7f3d0' },
-      generating: { bg: '#fef3c7', text: '#92400e', border: '#fde68a' },
+      published: { bg: '#d1fae5', text: '#065f46', border: '#a7f3d0' },
+      completed: { bg: '#fef3c7', text: '#92400e', border: '#fde68a' },
+      generating: { bg: '#dbeafe', text: '#1e40af', border: '#bfdbfe' },
       failed: { bg: '#fee2e2', text: '#991b1b', border: '#fecaca' },
+      archived: { bg: '#f3f4f6', text: '#4b5563', border: '#d1d5db' },
+      draft: { bg: '#f3f4f6', text: '#4b5563', border: '#d1d5db' },
     };
-    const c = colors[status] || colors.completed;
+    const c = colors[(status || '').toLowerCase()] || colors.archived;
     return {
       display: 'inline-block',
       padding: '0.2rem 0.65rem',
@@ -421,7 +424,7 @@ export default function ReportCreationPage() {
                     <td>{r.created_by || '\u2014'}</td>
                     <td>{formatDate(r.created_at)}</td>
                     <td>
-                      <span style={statusBadge(r.status)}>{r.status}</span>
+                      <span style={statusBadge(r.status)}>{r.status === 'completed' || !r.status ? 'Unpublished' : r.status}</span>
                     </td>
                   </tr>
                 ))}

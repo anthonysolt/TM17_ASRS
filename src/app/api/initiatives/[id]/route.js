@@ -70,8 +70,12 @@ export async function PUT(request, { params }) {
     }
 
     const body = await request.json();
-    const name = String(body.name || '').trim();
-    const description = String(body.description || '').trim();
+    const name = body.name !== undefined
+      ? String(body.name).trim()
+      : existing.initiative_name;
+    const description = body.description !== undefined
+      ? String(body.description).trim()
+      : existing.description || '';
     const attributes = Array.isArray(body.attributes) ? body.attributes : JSON.parse(existing.attributes || '[]');
     const questions = Array.isArray(body.questions) ? body.questions : JSON.parse(existing.questions || '[]');
     const settings = body.settings && typeof body.settings === 'object' ? body.settings : JSON.parse(existing.settings || '{}');

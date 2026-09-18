@@ -10,6 +10,77 @@ function isExpired(expiresAt) {
   return new Date(expiresAt) < new Date();
 }
 
+const QR_CODE_LIST_QUERY = `
+  SELECT
+    q.qr_code_id,
+    q.qr_code_key,
+    q.qr_type,
+    q.target_id,
+    q.target_url,
+    q.description,
+    q.created_at,
+    q.expires_at,
+    q.is_active,
+    q.qr_viewcount AS total_scans,
+    q.qr_conversion AS conversions,
+    f.form_name AS template_title
+  FROM qr_codes q
+  LEFT JOIN form f
+    ON q.qr_type = 'survey_template'
+   AND CAST(q.target_id AS INTEGER) = f.form_id
+  WHERE (
+    ? = 'all'
+    OR (? = 'survey' AND q.qr_type IN ('survey', 'survey_template'))
+    OR (? = 'report' AND q.qr_type = 'report')
+  )
+  ORDER BY q.created_at DESC
+`;
+
+// Older databases stored one row per scan instead of aggregate counters on
+// qr_codes. Supporting that schema here keeps newly generated codes visible
+// until the QR counter migration is applied.
+const LEGACY_QR_CODE_LIST_QUERY = `
+  SELECT
+    q.qr_code_id,
+    q.qr_code_key,
+    q.qr_type,
+    q.target_id,
+    q.target_url,
+    q.description,
+    q.created_at,
+    q.expires_at,
+    q.is_active,
+    COUNT(s.scan_id) FILTER (WHERE s.converted_to_submission IS DISTINCT FROM 1) AS total_scans,
+    COUNT(s.scan_id) FILTER (WHERE s.converted_to_submission = 1) AS conversions,
+    f.form_name AS template_title
+  FROM qr_codes q
+  LEFT JOIN form f
+    ON q.qr_type = 'survey_template'
+   AND CAST(q.target_id AS INTEGER) = f.form_id
+  LEFT JOIN qr_scans s ON s.qr_code_id = q.qr_code_id
+  WHERE (
+    ? = 'all'
+    OR (? = 'survey' AND q.qr_type IN ('survey', 'survey_template'))
+    OR (? = 'report' AND q.qr_type = 'report')
+  )
+  GROUP BY q.qr_code_id, f.form_name
+  ORDER BY q.created_at DESC
+`;
+
+function fetchQrCodeRows(scope) {
+  try {
+    return db.prepare(QR_CODE_LIST_QUERY).all(scope, scope, scope);
+  } catch (error) {
+    const missingAggregateColumns =
+      error?.code === '42703'
+      || /(?:qr_viewcount|qr_conversion).*(?:does not exist|no such column)/i.test(error?.message || '');
+
+    if (!missingAggregateColumns) throw error;
+
+    return db.prepare(LEGACY_QR_CODE_LIST_QUERY).all(scope, scope, scope);
+  }
+}
+
 export async function GET(request) {
   try {
     // Require authenticated user with minimum access rank 50 (admin/staff)
@@ -22,33 +93,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const scope = searchParams.get('scope') || 'all';
 
-    const rows = db
-      .prepare(`
-        SELECT
-          q.qr_code_id,
-          q.qr_code_key,
-          q.qr_type,
-          q.target_id,
-          q.target_url,
-          q.description,
-          q.created_at,
-          q.expires_at,
-          q.is_active,
-          q.qr_viewcount AS total_scans,
-          q.qr_conversion AS conversions,
-          f.form_name AS template_title
-        FROM qr_codes q
-        LEFT JOIN form f
-          ON q.qr_type = 'survey_template'
-         AND CAST(q.target_id AS INTEGER) = f.form_id
-        WHERE (
-          ? = 'all'
-          OR (? = 'survey' AND q.qr_type IN ('survey', 'survey_template'))
-          OR (? = 'report' AND q.qr_type = 'report')
-        )
-        ORDER BY q.created_at DESC
-      `)
-      .all(scope, scope, scope);
+    const rows = fetchQrCodeRows(scope);
 
     const qrCodes = rows.map((row) => {
       const totalScans = Number(row.total_scans || 0);

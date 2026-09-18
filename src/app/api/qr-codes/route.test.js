@@ -63,6 +63,49 @@ describe('/api/qr-codes GET', () => {
     expect(payload.qrCodes[0].isActive).toBe(true);
   });
 
+  test('falls back to legacy scan rows when aggregate columns are missing', async () => {
+    requirePermissionMock.mockReturnValue({ user: { user_id: 1 } });
+    const legacyRows = [
+      {
+        qr_code_id: 11,
+        qr_code_key: 'qr_new',
+        qr_type: 'survey_template',
+        target_id: 4,
+        target_url: 'https://example.com/survey/4',
+        description: 'New survey code',
+        created_at: '2026-09-17T00:00:00.000Z',
+        expires_at: null,
+        is_active: 1,
+        template_title: 'Campus Survey',
+        total_scans: 0,
+        conversions: 0,
+      },
+    ];
+
+    prepareMock
+      .mockReturnValueOnce({
+        all: vi.fn(() => {
+          const error = new Error('column q.qr_viewcount does not exist');
+          error.code = '42703';
+          throw error;
+        }),
+      })
+      .mockReturnValueOnce({ all: vi.fn(() => legacyRows) });
+
+    const res = await GET(new Request('http://localhost:3000/api/qr-codes?scope=survey'));
+    const payload = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(prepareMock).toHaveBeenCalledTimes(2);
+    expect(prepareMock.mock.calls[1][0]).toContain('LEFT JOIN qr_scans');
+    expect(payload.qrCodes[0]).toMatchObject({
+      qrCodeKey: 'qr_new',
+      templateTitle: 'Campus Survey',
+      isActive: true,
+      stats: { totalScans: 0, conversions: 0, conversionRate: 0 },
+    });
+  });
+
   test('DELETE removes a QR code by key', async () => {
     requirePermissionMock.mockReturnValue({ user: { email: 'staff@example.com' } });
     const deleteRun = vi.fn();

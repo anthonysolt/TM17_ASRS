@@ -765,6 +765,78 @@ body {
   background: var(--color-bg-primary);
 }
 
+/* Goals list: visually separate each scoring criterion into its own card. */
+.goal-list-section {
+  background: #F8FAFC;
+}
+
+.goal-list-subtitle {
+  margin-top: 4px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.goal-list-count {
+  padding: 5px 10px;
+  border: 1px solid #E2E8F0;
+  border-radius: 999px;
+  background: #fff;
+  color: #64748B;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.goal-list-table {
+  border-collapse: separate;
+  border-spacing: 0 12px;
+}
+
+.goal-list-table thead th {
+  border-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 2px;
+}
+
+.goal-list-table .goal-list-row {
+  --goal-accent: var(--color-asrs-orange);
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, .05));
+  transition: transform 150ms ease, filter 150ms ease;
+}
+
+.goal-list-table .goal-list-row:hover {
+  background: transparent;
+  filter: drop-shadow(0 5px 10px rgba(15, 23, 42, .09));
+  transform: translateY(-1px);
+}
+
+.goal-list-table .goal-list-row > td {
+  background: #fff;
+  border-top: 1px solid #E2E8F0;
+  border-bottom: 1px solid #E2E8F0;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+
+.goal-list-table .goal-list-row > td:first-child {
+  border-left: 4px solid var(--goal-accent);
+  border-radius: 10px 0 0 10px;
+}
+
+.goal-list-table .goal-list-row > td:last-child {
+  border-right: 1px solid #E2E8F0;
+  border-radius: 0 10px 10px 0;
+}
+
+.goal-list-table .goal-list-row-editing {
+  --goal-accent: var(--color-asrs-orange);
+}
+
+.goal-list-table .goal-list-row-editing > td:first-child:last-child {
+  border-right: 1px solid #E2E8F0;
+  border-radius: 10px;
+}
+
 /* ==========================================================================
  * RESPONSIVE BREAKPOINTS
  * ========================================================================== */

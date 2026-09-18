@@ -50,7 +50,7 @@ export default function LoginPage() {
     }
   };
 
-  const isSuccess = message && !message.toLowerCase().includes('error') && !message.toLowerCase().includes('failed');
+  const isSuccess = message && message.toLowerCase().includes('successful');
 
   return (
     <div style={{
@@ -87,6 +87,18 @@ export default function LoginPage() {
               {message}
             </div>
           )}
+
+              
+              {/* // padding: '0.75rem', marginBottom: '1rem',
+              // backgroundColor: isSuccess ? '#e8f5e9' : '#ffebee',
+              // border: `1px solid ${isSuccess ? '#c8e6c9' : '#ffcdd2'}`,
+              // borderRadius: 8,
+              // color: isSuccess ? '#2e7d32' : '#c62828',
+              // fontSize: '0.9rem',
+            }}>
+              {message}
+            </div>
+          )} */}
 
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: 20 }}>

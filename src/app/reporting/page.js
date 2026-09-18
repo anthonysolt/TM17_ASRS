@@ -25,7 +25,7 @@ const SOCIAL_PLATFORMS = ['Website', 'Instagram', 'Facebook', 'LinkedIn'];
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'html'];
 const LABEL_KEY_PRIORITY = ['label', 'name', 'category', 'platform', 'period', 'date', 'month', 'metric', 'type'];
 const CHART_POINT_LIMIT = 12;
-const STATUS_FILTERS = ['All', 'Published', 'Draft', 'Archived', 'Completed'];
+const STATUS_FILTERS = ['All', 'Published', 'Unpublished', 'Archived'];
 
 export default function ReportingPage() {
   const { user: authUser, hydrated } = useAuthStore();
@@ -147,7 +147,8 @@ export default function ReportingPage() {
       setReportMap(map);
       setPublishedReportMap(pubMap);
 
-      const activeMap = isStaff ? map : pubMap;
+      // The Report Viewer is limited to published reports for every role.
+      const activeMap = pubMap;
 
       const visibleInitiatives = isStaff
         ? initiativesList
@@ -330,6 +331,12 @@ export default function ReportingPage() {
     () => allReports.filter((r) => (r.status || '').toLowerCase() === 'published'),
     [allReports]
   );
+  const viewerReports = useMemo(() => {
+    if (!selectedInitiative?.id) return [];
+    return publishedReports
+      .filter((report) => String(report.initiative_id) === String(selectedInitiative.id))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  }, [publishedReports, selectedInitiative]);
   const isStaffOrAdmin = userRole === 'staff' || userRole === 'admin';
   const publicPublishedReports = useMemo(
     () => (isStaffOrAdmin ? [] : publishedReports),
@@ -390,7 +397,7 @@ export default function ReportingPage() {
     const s = (status || 'draft').toLowerCase();
     if (s === 'published') return { bg: '#D1FAE5', color: '#065F46', label: 'Published' };
     if (s === 'archived') return { bg: '#F3F4F6', color: '#6B7280', label: 'Archived' };
-    if (s === 'completed') return { bg: '#DBEAFE', color: '#1E40AF', label: 'Completed' };
+    if (s === 'completed') return { bg: '#FEF3C7', color: '#92400E', label: 'Unpublished' };
     if (s === 'generating') return { bg: '#FEF3C7', color: '#92400E', label: 'Generating' };
     if (s === 'failed') return { bg: '#FEE2E2', color: '#991B1B', label: 'Failed' };
     return { bg: '#FEF3C7', color: '#92400E', label: 'Draft' };
@@ -549,8 +556,9 @@ export default function ReportingPage() {
       const matchesSearch = !searchQuery ||
         (r.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (r.initiative_name || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const selectedStatus = statusFilter === 'Unpublished' ? 'completed' : statusFilter.toLowerCase();
       const matchesStatus = statusFilter === 'All' ||
-        (r.status || '').toLowerCase() === statusFilter.toLowerCase();
+        (r.status || '').toLowerCase() === selectedStatus;
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
@@ -1249,10 +1257,55 @@ export default function ReportingPage() {
                   selectedInitiative={selectedInitiative}
                   onSelect={(initiative) => {
                     setSelectedInitiative(initiative);
-                    loadReportForInitiative(initiative, publishedReportMap);
+                    const reportsForInitiative = publishedReports
+                      .filter((report) => String(report.initiative_id) === String(initiative.id))
+                      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+                    loadReportFromRecord(reportsForInitiative[0] || null);
                   }}
                 />
               </section>
+
+              {viewerReports.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Published reports ({viewerReports.length})
+                  </div>
+                  {viewerReports.map((report) => {
+                    const isSelected = String(reportDbId) === String(report.id);
+                    return (
+                      <button
+                        key={report.id}
+                        type="button"
+                        onClick={() => loadReportFromRecord(report)}
+                        style={{
+                          width: '100%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '1rem',
+                          padding: '1rem 1.25rem',
+                          border: isSelected ? '2px solid #E67E22' : '1px solid #E5E7EB',
+                          borderRadius: '10px',
+                          backgroundColor: isSelected ? '#FFF7ED' : '#fff',
+                          color: '#111827',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{report.name || 'Untitled Report'}</div>
+                          <div style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: '#6B7280' }}>
+                            {formatDate(report.created_at)}{report.created_by ? ` · by ${report.created_by}` : ''}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: isSelected ? '#C2410C' : '#047857', whiteSpace: 'nowrap' }}>
+                          {isSelected ? 'Viewing' : 'View report'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {reportData ? (
                 <>
@@ -1514,7 +1567,7 @@ export default function ReportingPage() {
                         </button>
                       )}
                       {(r.status || '').toLowerCase() === 'published' && (
-                        <button onClick={() => updateReportStatus(r.id, 'draft')} style={{ fontSize: '0.83rem', fontWeight: 500, color: '#92400E', background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem 0' }}>
+                        <button onClick={() => updateReportStatus(r.id, 'completed')} style={{ fontSize: '0.83rem', fontWeight: 500, color: '#92400E', background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem 0' }}>
                           Unpublish
                         </button>
                       )}
@@ -1601,9 +1654,8 @@ export default function ReportingPage() {
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem', color: '#6B7280' }}>Status</label>
               <select value={editStatus} onChange={(e) => setEditStatus(e.target.value)} style={{ width: '100%', padding: '0.55rem 0.75rem', border: '1px solid #E5E7EB', borderRadius: '6px', fontSize: '0.9rem', backgroundColor: '#F9FAFB' }}>
-                <option value="completed">Completed</option>
+                <option value="completed">Unpublished</option>
                 <option value="published">Published</option>
-                <option value="draft">Draft</option>
                 <option value="archived">Archived</option>
                 <option value="generating">Generating</option>
                 <option value="failed">Failed</option>

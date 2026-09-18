@@ -363,6 +363,21 @@ function InitiativeCreationContent() {
   return (
     <PageLayout title="Initiatives">
 
+      {/* ── Page-level status message ── */}
+      {message && (
+        <div style={{
+          padding: '0.75rem 1rem',
+          marginBottom: '1.25rem',
+          backgroundColor: message.includes('successfully') ? '#e8f5e9' : '#ffebee',
+          border: `1px solid ${message.includes('successfully') ? '#c8e6c9' : '#ffcdd2'}`,
+          borderRadius: '8px',
+          color: message.includes('successfully') ? '#2e7d32' : '#c62828',
+          fontSize: '0.9rem',
+        }}>
+          {message}
+        </div>
+      )}
+
       {/* ── Page header row ── */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 }}>Initiatives</h2>
@@ -472,7 +487,8 @@ function InitiativeCreationContent() {
                                   method: 'DELETE',
                                 });
                                 if (resp.ok) {
-                                  fetchInitiatives();
+                                    setMessage('Initiative deleted successfully!');
+                                    fetchInitiatives();
                                 } else {
                                   const data = await resp.json();
                                   alert(data.error || 'Failed to delete initiative');
@@ -501,21 +517,6 @@ function InitiativeCreationContent() {
           <div className="card-header">
             <span className="card-title">{isEditing ? 'Edit Initiative' : 'Create Initiative'}</span>
           </div>
-
-          {/* Status message */}
-          {message && (
-            <div style={{
-              padding: '0.75rem 1rem',
-              marginBottom: '1.25rem',
-              backgroundColor: message.includes('successfully') ? '#e8f5e9' : '#ffebee',
-              border: `1px solid ${message.includes('successfully') ? '#c8e6c9' : '#ffcdd2'}`,
-              borderRadius: '8px',
-              color: message.includes('successfully') ? '#2e7d32' : '#c62828',
-              fontSize: '0.9rem',
-            }}>
-              {message}
-            </div>
-          )}
 
           <form onSubmit={(e) => handleSubmit(e, false)}>
 
