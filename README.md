@@ -7,6 +7,7 @@ If you have already downloaded and set up the 1.20 version, please follow these 
 - `git checkout -f TM171-1.20`
 - `git reset --hard origin/TM17-1.20`
 
+To do a fresh download of 1.20, follow these steps:
 - Launch Linux VM
   - Install the ZIP folder of the 1.20 branch from the GitHub repo (Move zip to the desktop and extract it to the desktop)
   - Open the `TM17_ASRS-TM17_1.20` folder on your desktop and open the nested `TM17_ASRS-TM17_1.20` folder
