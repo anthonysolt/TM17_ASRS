@@ -9,7 +9,6 @@
  * - Chart display (pie, bar, line)
  * - Data table
  * - Trend display
- * - Export and Share panels (conditional on user role)
  *
  * Props:
  * - reportData: Object — The full report data from dataService
@@ -26,13 +25,12 @@ import SortPanel from './SortPanel';
 import ChartDisplay from './ChartDisplay';
 import DataTable from './DataTable';
 import TrendDisplay from './TrendDisplay';
-import ExportPanel from './ExportPanel';
-import SharePanel from './SharePanel';
-import AIInsightsPanel from './AIInsightsPanel';
+// import AIInsightsPanel from './AIInsightsPanel';
 import { getSortedReportData } from '@/lib/data-service';
 import { buildFilteredChartData, filterReportRows, getReportFilterColumns } from '@/lib/report-view-filters';
 
-export default function ReportDashboard({ reportData, trendData, selectedInitiative, userRole, reportDbId, preloadedInsights }) {
+// showDataTable: set false to hide the survey responses table (and the Charts/Table view toggle).
+export default function ReportDashboard({ reportData, trendData, selectedInitiative, userRole, reportDbId, preloadedInsights, showDataTable = true }) {
   // ---- STATE for filters and sorts ----
   // activeFilters stores the user's current filter selections as key-value pairs
   // Example: { grade: "7th", school: "Lincoln MS" }
@@ -279,11 +277,11 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
         </div>
       </div>
 
-      {/* ---- VIEW TOGGLE + EXPORT/SHARE ROW ---- */}
+      {/* ---- VIEW TOGGLE ROW ---- */}
       {/* Stacks vertically on mobile via .view-toggle-bar */}
       <div className="view-toggle-bar">
         {/* View toggle: Charts / Table / Both */}
-        <div className="view-toggle-buttons">
+        {showDataTable && <div className="view-toggle-buttons">
           {['charts', 'table', 'both'].map(view => (
             <button
               key={view}
@@ -294,15 +292,8 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
               {view === 'both' ? 'Charts & Table' : view === 'charts' ? 'Charts Only' : 'Table Only'}
             </button>
           ))}
-        </div>
+        </div>}
 
-        {/* Export and Share panels — only visible to Staff and Admin (per REP033) */}
-        {(userRole === 'staff' || userRole === 'admin') && (
-          <div className="action-buttons-group">
-            <ExportPanel reportData={reportData} />
-            <SharePanel reportId={reportData.reportId} />
-          </div>
-        )}
       </div>
 
       {/* ---- FILTER & SORT PANELS ---- */}
@@ -325,12 +316,12 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
 
       {/* ---- CHARTS ---- */}
       {/* Displayed for Public (website view) per REP016 — graphical displays */}
-      {(activeView === 'charts' || activeView === 'both') && (
+      {(!showDataTable || activeView === 'charts' || activeView === 'both') && (
         <ChartDisplay chartData={processedChartData} />
       )}
 
       {/* ---- DATA TABLE (with Data Tools: inline filters, sort, calculations) ---- */}
-      {(activeView === 'table' || activeView === 'both') && (
+      {showDataTable && (activeView === 'table' || activeView === 'both') && (
         <DataTable
           data={inlineProcessedData}
           columns={reportData.tableData.length > 0 ? Object.keys(reportData.tableData[0]) : []}
@@ -355,13 +346,13 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
 
       {/* ---- AI INSIGHTS ---- */}
       {/* On-demand AI analysis — staff/admin only */}
-      {(userRole === 'staff' || userRole === 'admin') && reportDbId && (
+      {/* {(userRole === 'staff' || userRole === 'admin') && reportDbId && (
         <AIInsightsPanel
           reportDbId={reportDbId}
           userRole={userRole}
           preloadedInsights={preloadedInsights}
         />
-      )}
+      )} */}
 
       {reportData.explainability && (
         <div className="asrs-card">

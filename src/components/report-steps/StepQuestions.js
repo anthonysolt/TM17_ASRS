@@ -1,12 +1,6 @@
 'use client';
 
-const METHODS = [
-  { value: 'most_popular', label: 'Most Popular Answer' },
-  { value: 'average', label: 'Average Answer' },
-  { value: 'least_common', label: 'Least Common Answer' },
-  { value: 'delta_halves', label: 'Half-to-Half Delta' },
-  { value: 'linear_slope', label: 'Linear Slope' },
-];
+import { ANALYSIS_METHODS as METHODS } from '@/lib/analysis-methods';
 
 export default function StepQuestions({ reportConfig, onChange, questions, loading }) {
   const selections = reportConfig.questionSelections || [];

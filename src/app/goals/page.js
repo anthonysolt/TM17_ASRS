@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import { getScoreColor } from '@/lib/score-utils';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
+import { ANALYSIS_METHODS, getAnalysisMethodLabel } from '@/lib/analysis-methods';
 
 /** Keep user-entered goal weights within the supported percentage range. */
 function clampWeight(value) {
@@ -13,6 +14,14 @@ function clampWeight(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return value;
   return String(Math.min(100, Math.max(0, numericValue)));
+}
+
+/** Prevent current values from going negative. */
+function clampCurrentValue(value) {
+  if (value === '') return '';
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return value;
+  return String(Math.max(0, numericValue));
 }
 
 /** Calculate raw progress toward a goal independently of its scoring method. */
@@ -35,6 +44,61 @@ function formatPercentage(value) {
   return numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+/**
+ * Optional survey-question source for a goal's current value. With a question
+ * selected, the API computes current_value from that question's responses
+ * using the chosen analysis method (same methods as report generation).
+ */
+function QuestionSourceFields({ goal, questions, onChange }) {
+  const isSourced = Boolean(goal.source_root_field_id);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 16 }}>
+      <div>
+        <label style={labelStyle}>Current Value Source</label>
+        <select
+          value={goal.source_root_field_id || ''}
+          onChange={(e) => onChange({
+            source_root_field_id: e.target.value,
+            source_method: e.target.value ? (goal.source_method || 'average') : '',
+          })}
+          style={{ ...inputStyle, cursor: 'pointer' }}
+        >
+          <option value="">Enter manually</option>
+          {questions.map((question) => (
+            <option key={question.id} value={question.id}>{question.label}</option>
+          ))}
+        </select>
+        {questions.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+            This initiative has no survey questions yet.
+          </div>
+        )}
+      </div>
+      <div>
+        <label style={labelStyle}>Analysis Method</label>
+        <select
+          value={goal.source_method || ''}
+          disabled={!isSourced}
+          onChange={(e) => onChange({ source_method: e.target.value })}
+          style={{ ...inputStyle, cursor: isSourced ? 'pointer' : 'default', opacity: isSourced ? 1 : 0.6 }}
+        >
+          {!isSourced && <option value="">—</option>}
+          {ANALYSIS_METHODS.map((method) => (
+            <option key={method.value} value={method.value}>{method.label}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+/** Convert form source fields into the API payload (null for manual goals). */
+function toSourcePayload(goal) {
+  return goal.source_root_field_id
+    ? { source_root_field_id: Number(goal.source_root_field_id), source_method: goal.source_method }
+    : { source_root_field_id: null, source_method: null };
+}
+
 export default function GoalsPage() {
   // ---------------------------------------------------------------------------
   // Page state
@@ -47,6 +111,8 @@ export default function GoalsPage() {
   const [selectedInitiative, setSelectedInitiative] = useState('');
   const [goals, setGoals] = useState([]);
   const [overallScore, setOverallScore] = useState(0);
+  // Survey questions of the selected initiative that goals can source from.
+  const [questions, setQuestions] = useState([]);
 
   // Page-level UI state and user feedback.
   const [isLoading, setIsLoading] = useState(false);
@@ -59,12 +125,13 @@ export default function GoalsPage() {
   const [newGoal, setNewGoal] = useState({
     goal_name: '',
     description: '',
-    target_metric: '',
     target_value: '',
     current_value: '0',
     weight: '2',
     scoring_method: 'linear',
     deadline: '',
+    source_root_field_id: '',
+    source_method: '',
   });
 
   // The edit timestamp supports optimistic concurrency conflict detection (US-035).
@@ -130,9 +197,14 @@ export default function GoalsPage() {
   useEffect(() => {
     if (selectedInitiative) {
       fetchGoals(selectedInitiative);
+      apiFetch(`/api/goals/questions?initiativeId=${selectedInitiative}`)
+        .then((res) => (res.ok ? res.json() : { questions: [] }))
+        .then((data) => setQuestions(data.questions || []))
+        .catch(() => setQuestions([]));
     } else {
       setGoals([]);
       setOverallScore(0);
+      setQuestions([]);
     }
   }, [selectedInitiative, fetchGoals]);
 
@@ -153,12 +225,12 @@ export default function GoalsPage() {
           initiative_id: parseInt(selectedInitiative),
           goal_name: newGoal.goal_name,
           description: newGoal.description,
-          target_metric: newGoal.target_metric,
           target_value: parseFloat(newGoal.target_value),
           current_value: parseFloat(newGoal.current_value) || 0,
           weight: parseFloat(newGoal.weight),
           scoring_method: newGoal.scoring_method,
           deadline: newGoal.deadline || null,
+          ...toSourcePayload(newGoal),
         }),
       });
 
@@ -170,12 +242,13 @@ export default function GoalsPage() {
       setNewGoal({
         goal_name: '',
         description: '',
-        target_metric: '',
         target_value: '',
         current_value: '0',
         weight: '2',
         scoring_method: 'linear',
         deadline: '',
+        source_root_field_id: '',
+        source_method: '',
       });
       fetchGoals(selectedInitiative);
     } catch (err) {
@@ -199,12 +272,12 @@ export default function GoalsPage() {
           expected_updated_at: editBaselineUpdatedAt,
           goal_name: editGoal.goal_name,
           description: editGoal.description,
-          target_metric: editGoal.target_metric,
           target_value: parseFloat(editGoal.target_value),
           current_value: parseFloat(editGoal.current_value),
           weight: parseFloat(editGoal.weight),
           scoring_method: editGoal.scoring_method,
           deadline: editGoal.deadline || null,
+          ...toSourcePayload(editGoal),
         }),
       });
 
@@ -255,12 +328,13 @@ export default function GoalsPage() {
     setEditGoal({
       goal_name: goal.goal_name,
       description: goal.description || '',
-      target_metric: goal.target_metric,
       target_value: goal.target_value,
       current_value: goal.current_value,
       weight: goal.weight,
       scoring_method: goal.scoring_method,
       deadline: goal.deadline || '',
+      source_root_field_id: goal.source_root_field_id ? String(goal.source_root_field_id) : '',
+      source_method: goal.source_method || '',
     });
   }
 
@@ -478,29 +552,16 @@ export default function GoalsPage() {
             <span className="card-title">New Goal</span>
           </div>
           <form onSubmit={handleAddGoal}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-              <div>
-                <label style={labelStyle}>Goal Name *</label>
-                <input
-                  type="text"
-                  value={newGoal.goal_name}
-                  onChange={(e) => setNewGoal({ ...newGoal, goal_name: e.target.value })}
-                  placeholder="e.g., Increase Participation"
-                  required
-                  style={inputStyle}
-                />
-              </div>
-              <div>
-                <label style={labelStyle}>Goal Metric *</label>
-                <input
-                  type="text"
-                  value={newGoal.target_metric}
-                  onChange={(e) => setNewGoal({ ...newGoal, target_metric: e.target.value })}
-                  placeholder="e.g., Number of participants"
-                  required
-                  style={inputStyle}
-                />
-              </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Goal Name *</label>
+              <input
+                type="text"
+                value={newGoal.goal_name}
+                onChange={(e) => setNewGoal({ ...newGoal, goal_name: e.target.value })}
+                placeholder="e.g., Increase Participation"
+                required
+                style={inputStyle}
+              />
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -524,6 +585,12 @@ export default function GoalsPage() {
               />
             </div>
 
+            <QuestionSourceFields
+              goal={newGoal}
+              questions={questions}
+              onChange={(changes) => setNewGoal({ ...newGoal, ...changes })}
+            />
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, marginBottom: 20 }}>
               <div>
                 <label style={labelStyle}>Target Value *</label>
@@ -542,17 +609,19 @@ export default function GoalsPage() {
                 <input
                   type="number"
                   step="any"
-                  value={newGoal.current_value}
-                  onChange={(e) => setNewGoal({ ...newGoal, current_value: e.target.value })}
-                  placeholder="0"
-                  style={inputStyle}
+                  min="0"
+                  value={newGoal.source_root_field_id ? '' : newGoal.current_value}
+                  disabled={Boolean(newGoal.source_root_field_id)}
+                  onChange={(e) => setNewGoal({ ...newGoal, current_value: clampCurrentValue(e.target.value) })}
+                  placeholder={newGoal.source_root_field_id ? 'From responses' : '0'}
+                  style={{ ...inputStyle, opacity: newGoal.source_root_field_id ? 0.6 : 1 }}
                 />
               </div>
               <div>
                 <label style={labelStyle}>Weight (%) *</label>
                 <input
                   type="number"
-                  step="0.01"
+                  step="1"
                   min="0"
                   max="100"
                   value={newGoal.weight}
@@ -624,25 +693,14 @@ export default function GoalsPage() {
                           <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: 'var(--color-text-primary)' }}>
                             Editing: {goal.goal_name}
                           </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                            <div>
-                              <label style={labelStyle}>Goal Name</label>
-                              <input
-                                type="text"
-                                value={editGoal.goal_name}
-                                onChange={(e) => setEditGoal({ ...editGoal, goal_name: e.target.value })}
-                                style={inputStyle}
-                              />
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Target Metric</label>
-                              <input
-                                type="text"
-                                value={editGoal.target_metric}
-                                onChange={(e) => setEditGoal({ ...editGoal, target_metric: e.target.value })}
-                                style={inputStyle}
-                              />
-                            </div>
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={labelStyle}>Goal Name</label>
+                            <input
+                              type="text"
+                              value={editGoal.goal_name}
+                              onChange={(e) => setEditGoal({ ...editGoal, goal_name: e.target.value })}
+                              style={inputStyle}
+                            />
                           </div>
                           <div style={{ marginBottom: 12 }}>
                             <label style={labelStyle}>Description</label>
@@ -662,6 +720,11 @@ export default function GoalsPage() {
                               style={inputStyle}
                             />
                           </div>
+                          <QuestionSourceFields
+                            goal={editGoal}
+                            questions={questions}
+                            onChange={(changes) => setEditGoal({ ...editGoal, ...changes })}
+                          />
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
                             <div>
                               <label style={labelStyle}>Target Value</label>
@@ -678,16 +741,19 @@ export default function GoalsPage() {
                               <input
                                 type="number"
                                 step="any"
-                                value={editGoal.current_value}
-                                onChange={(e) => setEditGoal({ ...editGoal, current_value: e.target.value })}
-                                style={inputStyle}
+                                min="0"
+                                value={editGoal.source_root_field_id ? '' : editGoal.current_value}
+                                disabled={Boolean(editGoal.source_root_field_id)}
+                                onChange={(e) => setEditGoal({ ...editGoal, current_value: clampCurrentValue(e.target.value) })}
+                                placeholder={editGoal.source_root_field_id ? 'From responses' : undefined}
+                                style={{ ...inputStyle, opacity: editGoal.source_root_field_id ? 0.6 : 1 }}
                               />
                             </div>
                             <div>
                               <label style={labelStyle}>Weight (%)</label>
                               <input
                                 type="number"
-                                step="0.01"
+                                step="1"
                                 min="0"
                                 max="100"
                                 value={editGoal.weight}
@@ -744,9 +810,17 @@ export default function GoalsPage() {
                             {goal.description}
                           </div>
                         )}
-                        <div style={{ fontSize: 11, color: 'var(--color-text-light)', marginTop: 2 }}>
-                          {goal.target_metric}
-                        </div>
+                        {goal.source_root_field_id && (
+                          <div
+                            title={goal.source?.description || ''}
+                            style={{ fontSize: 11, color: '#2563EB', marginTop: 4 }}
+                          >
+                            Sourced from: {goal.source?.questionLabel || 'Survey question'} · {getAnalysisMethodLabel(goal.source_method)}
+                            {goal.source && goal.source.value === null && (
+                              <span style={{ color: 'var(--color-text-light)' }}> (not enough data yet)</span>
+                            )}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -890,6 +964,18 @@ export default function GoalsPage() {
                       {goal.current_value}
                     </div>
                   </div>
+
+                  {/* Display-only: threshold scoring stays all-or-nothing */}
+                  {goal.scoring_method === 'threshold' && (
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-light)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                        Goal Progress
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: getScoreColor(getGoalProgress(goal)) }}>
+                        {formatPercentage(getGoalProgress(goal))}%
+                      </div>
+                    </div>
+                  )}
 
                   <div style={{ marginTop: 4 }}>
                     {getStatusBadge(goal)}

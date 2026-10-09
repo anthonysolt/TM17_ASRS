@@ -12,7 +12,7 @@ import EVENTS from '@/lib/events/event-types';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { alertDb } from '@/lib/db-alerts';
 import { logAudit } from '@/lib/audit';
-import { generateReportInsights } from '@/lib/openai-report-insights';
+// import { generateReportInsights } from '@/lib/openai-report-insights';
 
 function startGenerationLog(db, payload) {
   return db.prepare(`
@@ -176,14 +176,8 @@ export async function POST(request) {
     };
 
     // Compute chart data from real submission values
-    const selectedPlaceholders = selectedIds.map(() => '?').join(', ');
-    const chartFields = db.prepare(`
-      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
-      FROM field f
-      JOIN form_questions fq ON fq.field_id = f.field_id
-      JOIN form fm ON fm.form_id = fq.form_id
-      WHERE fm.initiative_id = ? AND f.field_id IN (${selectedPlaceholders})
-    `).all(initiativeId, ...selectedIds);
+    // field_id is the question's root id, so answers from every revision count.
+    const chartFields = selectedQuestionData.questions;
 
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
@@ -196,7 +190,7 @@ export async function POST(request) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -209,7 +203,7 @@ export async function POST(request) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -226,7 +220,7 @@ export async function POST(request) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -240,7 +234,7 @@ export async function POST(request) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -257,7 +251,9 @@ export async function POST(request) {
     const selectionsById = new Map(payload.questionSelections.map((selection) => [selection.id, selection]));
     const questionAnalyses = selectedQuestionData.questions.map((question) => ({
       id: question.field_id,
+      // Label and survey version as they were when this report was generated.
       label: question.field_label || question.column,
+      versionNumber: question.version_number,
       column: question.column,
       method: selectionsById.get(question.field_id).method,
       thresholdPct: 2,
@@ -299,33 +295,33 @@ export async function POST(request) {
 
     // Optional AI insights generation
     let aiInsights = null;
-    if (payload.includeAiInsights) {
-      const aiStartedAt = Date.now();
-      try {
-        aiInsights = await generateReportInsights({
-          initiativeName: initiative.initiative_name,
-          summary,
-          metrics,
-          chartData,
-          trendData,
-          sampleTableData: filteredData.slice(0, 50),
-        });
-        if (!aiInsights.aiGenerated) aiInsights = null;
-      } catch {
-        aiInsights = null;
-      }
-      const aiDurationMs = Date.now() - aiStartedAt;
-      // Log AI duration if generation log exists
-      if (generationLogId) {
-        try {
-          db.prepare(
-            'UPDATE report_generation_log SET ai_status = ?, ai_duration_ms = ? WHERE log_id = ?'
-          ).run(aiInsights ? 'completed' : 'failed', aiDurationMs, Number(generationLogId));
-        } catch {
-          // ai columns may not exist yet — ignore
-        }
-      }
-    }
+    // if (payload.includeAiInsights) {
+    //   const aiStartedAt = Date.now();
+    //   try {
+    //     aiInsights = await generateReportInsights({
+    //       initiativeName: initiative.initiative_name,
+    //       summary,
+    //       metrics,
+    //       chartData,
+    //       trendData,
+    //       sampleTableData: filteredData.slice(0, 50),
+    //     });
+    //     if (!aiInsights.aiGenerated) aiInsights = null;
+    //   } catch {
+    //     aiInsights = null;
+    //   }
+    //   const aiDurationMs = Date.now() - aiStartedAt;
+    //   // Log AI duration if generation log exists
+    //   if (generationLogId) {
+    //     try {
+    //       db.prepare(
+    //         'UPDATE report_generation_log SET ai_status = ?, ai_duration_ms = ? WHERE log_id = ?'
+    //       ).run(aiInsights ? 'completed' : 'failed', aiDurationMs, Number(generationLogId));
+    //     } catch {
+    //       // ai columns may not exist yet — ignore
+    //     }
+    //   }
+    // }
 
     const snapshot = {
       version: 2,
@@ -432,7 +428,7 @@ export async function PUT(request) {
 
     const { id, name, description, status } = payloadValidation.value;
 
-    const existing = db.prepare('SELECT id FROM reports WHERE id = ?').get(Number(id));
+    const existing = db.prepare('SELECT id, status FROM reports WHERE id = ?').get(Number(id));
     if (!existing) {
       return NextResponse.json({ error: 'Report not found' }, { status: 404 });
     }
@@ -451,6 +447,11 @@ export async function PUT(request) {
     if (status !== undefined) {
       updates.push('status = ?');
       params.push(status);
+      // Moving into 'published' (e.g. from archived) restamps the publish date.
+      if (status === 'published' && existing.status !== 'published') {
+        updates.push('published_at = ?');
+        params.push(new Date().toISOString());
+      }
     }
 
     params.push(Number(id));

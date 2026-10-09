@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServiceContainer } from '@/lib/container/service-container';
 import { requirePermission } from '@/lib/auth/server-auth';
+import { queryInitiativeQuestions } from '@/lib/query-helpers';
 
 export async function GET(request, { params }) {
   try {
@@ -21,18 +22,13 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: 'Initiative not found' }, { status: 404 });
     }
 
-    const questions = db.prepare(`
-      SELECT f.field_id AS id, f.field_label AS label, f.field_type AS type,
-             MIN(fq.display_order) AS display_order
-      FROM field f
-      JOIN form_questions fq ON fq.field_id = f.field_id
-      JOIN form fm ON fm.form_id = fq.form_id
-      WHERE fm.initiative_id = ?
-      GROUP BY f.field_id, f.field_label, f.field_type
-      ORDER BY display_order, f.field_id
-    `).all(initiativeId).map((question) => ({
-      ...question,
-      label: question.label || `Question ${question.id}`,
+    // One entry per question, labelled with its most recent iteration.
+    const questions = queryInitiativeQuestions(db, initiativeId).map((question) => ({
+      id: question.field_id,
+      label: question.field_label || `Question ${question.field_id}`,
+      type: question.field_type,
+      display_order: question.display_order,
+      version: question.version_number,
     }));
 
     return NextResponse.json({ questions });

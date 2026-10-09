@@ -88,6 +88,16 @@ describe('validateFieldValue — text-backed radio', () => {
   });
 });
 
+describe('validateFieldValue — Likert scales', () => {
+  const likertField = { field_type: 'likert_agreement', options: ['1', '2', '3', '4', '5', '6', '7'] };
+
+  it('accepts numeric scale values and rejects values outside the scale', () => {
+    expect(validateFieldValue(6, likertField, null)).toBeNull();
+    expect(validateFieldValue('7', likertField, null)).toBeNull();
+    expect(validateFieldValue(8, likertField, null)).toContain('valid Likert');
+  });
+});
+
 describe('resolveValidationRules', () => {
   it('merges base and override, with override winning on conflict', () => {
     const base = JSON.stringify({ minLength: 2, maxLength: 10 });

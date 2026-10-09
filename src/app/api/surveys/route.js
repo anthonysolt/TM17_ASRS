@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { validateAndCleanSurvey, validateTemplateAnswers } from '@/lib/survey-validation';
 import { alertDb } from '@/lib/db-alerts';
+import { isLikertType } from '@/lib/forms/likert-scales';
+import { syncQuestionSourcedGoals } from '@/lib/goals/question-source';
 
 function toLocalYyyyMmDd(date) {
   const year = date.getFullYear();
@@ -33,7 +35,14 @@ export async function POST(request) {
     {
       const templateCandidate = effectiveTemplateId || (cleaned.responses && cleaned.responses.templateId);
       if (templateCandidate) {
-        const formRow = db.prepare(`SELECT form_id, initiative_id FROM form WHERE form_id = ? LIMIT 1`).get(Number(templateCandidate));
+        const formRow = db.prepare(`
+          SELECT f.form_id, f.initiative_id, fv.form_version_id
+          FROM form f
+          JOIN form_version fv ON fv.form_id = f.form_id AND fv.status = 'published'
+          WHERE f.form_id = ?
+          ORDER BY fv.version_number DESC
+          LIMIT 1
+        `).get(Number(templateCandidate));
         if (formRow && formRow.form_id) {
           const answersToValidate = cleaned.responses && cleaned.responses.templateAnswers ? cleaned.responses.templateAnswers : null;
           if (answersToValidate && Object.keys(answersToValidate).length > 0) {
@@ -42,10 +51,11 @@ export async function POST(request) {
               SELECT f.field_id, f.field_type, fq.required,
                      f.validation_rules AS field_rules,
                      fq.validation_rules AS form_field_rules
-              FROM form_questions fq
+              FROM form_version_questions fvq
+              JOIN form_questions fq ON fq.form_question_id = fvq.form_question_id
               JOIN field f ON fq.field_id = f.field_id
-              WHERE fq.form_id = ?
-            `).all(formRow.form_id);
+              WHERE fq.form_id = ? AND fvq.form_version_id = ? AND fq.is_hidden = 0
+            `).all(formRow.form_id, formRow.form_version_id);
 
             const getOptions = db.prepare(`SELECT option_value FROM field_options WHERE field_id = ? ORDER BY display_order`);
             for (const ff of formFields) {
@@ -55,7 +65,7 @@ export async function POST(request) {
               } catch {
                 // Keep the stored field type when validation metadata is malformed.
               }
-              if (['select', 'radio', 'choice', 'multiselect', 'checkbox'].includes(ff.field_type)) {
+              if (['select', 'radio', 'choice', 'multiselect', 'checkbox'].includes(ff.field_type) || isLikertType(ff.field_type)) {
                 ff.options = getOptions.all(ff.field_id).map(o => o.option_value);
               }
             }
@@ -110,11 +120,18 @@ export async function POST(request) {
       const templateCandidate = effectiveTemplateId || (cleaned.responses && cleaned.responses.templateId);
       if (templateCandidate) {
         // Try to resolve to a numeric form_id
-        const formRow = db.prepare(`SELECT form_id, initiative_id FROM form WHERE form_id = ? LIMIT 1`).get(Number(templateCandidate));
+        const formRow = db.prepare(`
+          SELECT f.form_id, f.initiative_id, fv.form_version_id
+          FROM form f
+          JOIN form_version fv ON fv.form_id = f.form_id AND fv.status = 'published'
+          WHERE f.form_id = ?
+          ORDER BY fv.version_number DESC
+          LIMIT 1
+        `).get(Number(templateCandidate));
         if (formRow && formRow.form_id) {
           // Build and run a transaction for normalized inserts
-          const insertNormalized = db.transaction((formId, initiativeId, answers) => {
-            const submissionInfo = db.prepare(`INSERT INTO submission (initiative_id, form_id, submitted_by_user_id) VALUES (?, ?, NULL)`).run(initiativeId || 1, formId);
+          const insertNormalized = db.transaction((formId, formVersionId, initiativeId, answers) => {
+            const submissionInfo = db.prepare(`INSERT INTO submission (initiative_id, form_id, form_version_id, submitted_by_user_id) VALUES (?, ?, ?, NULL)`).run(initiativeId || 1, formId, formVersionId);
             const submissionId = submissionInfo.lastInsertRowid;
 
             const insertVal = db.prepare(`INSERT INTO submission_value (submission_id, form_question_id, value_text, value_number, value_date, value_bool, value_json) VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -122,14 +139,15 @@ export async function POST(request) {
               SELECT fq.form_question_id, f.field_type, f.validation_rules
               FROM field f
               JOIN form_questions fq ON fq.field_id = f.field_id
-              WHERE f.field_id = ? AND fq.form_id = ?
+              JOIN form_version_questions fvq ON fvq.form_question_id = fq.form_question_id
+              WHERE f.field_id = ? AND fq.form_id = ? AND fvq.form_version_id = ? AND fq.is_hidden = 0
               LIMIT 1
             `);
 
             for (const [fieldKey, rawVal] of Object.entries(answers || {})) {
               const fieldId = Number(fieldKey);
               if (!fieldId) continue;
-              const field = getField.get(fieldId, formId);
+              const field = getField.get(fieldId, formId, formVersionId);
               if (!field) continue;
 
               let displayType = field.field_type;
@@ -173,7 +191,9 @@ export async function POST(request) {
           // Look for answers in the conventional `templateAnswers` object sent by the UI
           const answers = cleaned.responses && cleaned.responses.templateAnswers ? cleaned.responses.templateAnswers : null;
           if (answers && Object.keys(answers).length > 0) {
-            insertNormalized(formRow.form_id, formRow.initiative_id, answers);
+            insertNormalized(formRow.form_id, formRow.form_version_id, formRow.initiative_id, answers);
+            // Keep goals that source their current value from survey questions up to date.
+            syncQuestionSourcedGoals(db, formRow.initiative_id || 1, { userEmail: 'system:survey-submission' });
           }
         }
       }
@@ -284,6 +304,7 @@ export async function DELETE(request) {
 
     const deleteTransaction = db.transaction((id) => {
       db.prepare('DELETE FROM reports WHERE survey_id = ?').run(id);
+      db.prepare("DELETE FROM qr_codes WHERE qr_type = 'survey' AND target_id = ?").run(id);
       db.prepare('DELETE FROM surveys WHERE id = ?').run(id);
       // If a `submission` table exists with a link, add cascade delete here as well:
       // db.prepare('DELETE FROM submission WHERE survey_id = ?').run(id);

@@ -11,8 +11,11 @@
     "db:migrate:question-classification": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260820_core_initiative_questions.sql",
     "db:migrate:form-questions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260820_form_questions.sql",
     "db:migrate:qr-counters": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260821_qr_aggregate_counters.sql",
-    "dev": "next dev",
-    "build": "next build",
+    "db:migrate:form-versions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260923_form_versions.sql",
+    "db:migrate:shared-form-questions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_shared_form_questions.sql",
+    "db:migrate:report-published-at": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_report_published_at.sql",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run"

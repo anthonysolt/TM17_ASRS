@@ -6,6 +6,7 @@ import PageLayout from '@/components/PageLayout';
 import ReportDashboard from '@/components/ReportDashboard';
 import { normalizeSnapshot } from '@/lib/report-snapshot';
 import { apiFetch } from '@/lib/api/client';
+import { buildReportFileName } from '@/lib/download-filename';
 
 export default function HistoricalReportsPage() {
   const [userRole, setUserRole] = useState('public');
@@ -137,7 +138,7 @@ export default function HistoricalReportsPage() {
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${(report.name || 'report').replace(/\s+/g, '_')}.csv`;
+    link.download = `${buildReportFileName(report.name)}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }

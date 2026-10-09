@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db, initializeDatabase } from '@/lib/db';
-import { queryTableData } from '@/lib/query-helpers';
+import { queryInitiativeQuestions, queryTableData } from '@/lib/query-helpers';
 import { requirePermission } from '@/lib/auth/server-auth';
 
 export async function GET(request, { params }) {
@@ -52,13 +52,8 @@ export async function GET(request, { params }) {
     };
 
     // Compute chart data from real submission values
-    const chartFields = db.prepare(`
-      SELECT DISTINCT f.field_id, f.field_key, f.field_label, f.field_type
-      FROM field f
-      JOIN form_questions fq ON fq.field_id = f.field_id
-      JOIN form fm ON fm.form_id = fq.form_id
-      WHERE fm.initiative_id = ?
-    `).all(initiativeId);
+    // field_id is the question's root id, so answers from every revision count.
+    const chartFields = queryInitiativeQuestions(db, initiativeId);
 
     const chartData = {};
     const MAX_CATEGORICAL_VALUES = 15;
@@ -71,7 +66,7 @@ export async function GET(request, { params }) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -84,7 +79,7 @@ export async function GET(request, { params }) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);
@@ -100,7 +95,7 @@ export async function GET(request, { params }) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_text IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
           GROUP BY sv.value_text
           ORDER BY value DESC
         `).all(initiativeId, field.field_id);
@@ -113,7 +108,7 @@ export async function GET(request, { params }) {
           FROM submission_value sv
           JOIN submission s ON s.submission_id = sv.submission_id
           JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.field_id = ? AND sv.value_number IS NOT NULL
+          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
           GROUP BY CAST(sv.value_number AS INTEGER)
           ORDER BY name
         `).all(initiativeId, field.field_id);

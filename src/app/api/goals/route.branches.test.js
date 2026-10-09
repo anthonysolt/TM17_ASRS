@@ -154,7 +154,7 @@ describe('/api/goals branch coverage', () => {
     prepareMock.mockImplementation((sql) => {
       const query = String(sql || '');
       if (query.includes('SELECT * FROM initiative_goal WHERE goal_id = ?')) return { get: () => undefined };
-      return { get: vi.fn(), run: vi.fn() };
+      return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
     expect((await DELETE(req('http://localhost:3000/api/goals?goalId=8'))).status).toBe(404);
 
@@ -162,7 +162,7 @@ describe('/api/goals branch coverage', () => {
       const query = String(sql || '');
       if (query.includes('SELECT * FROM initiative_goal WHERE goal_id = ?')) return { get: () => ({ goal_id: 8 }) };
       if (query.includes('DELETE FROM initiative_goal')) return { run: vi.fn() };
-      return { get: vi.fn(), run: vi.fn() };
+      return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
     expect((await DELETE(req('http://localhost:3000/api/goals?goalId=8'))).status).toBe(200);
 

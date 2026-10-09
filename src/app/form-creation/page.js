@@ -2,7 +2,10 @@
 
 import PageLayout from '@/components/PageLayout';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
+import { getEditTemplateUrl, templateToEditableForm } from '@/lib/forms/form-editing-client';
+import { getLikertLabels, isLikertType, LIKERT_SCALES } from '@/lib/forms/likert-scales';
 
 // Question type labels + icons
 const QUESTION_TYPE_DEFS = [
@@ -14,65 +17,75 @@ const QUESTION_TYPE_DEFS = [
   { type: 'radio',      label: 'Multiple Choice', icon: '⊙' },
   { type: 'date',       label: 'Date',          icon: '📅' },
   { type: 'rating',     label: 'Rating',        icon: '★' },
+  ...Object.entries(LIKERT_SCALES).map(([type, scale]) => ({ type, label: scale.label, icon: '☷' })),
   { type: 'email',      label: 'Email',         icon: '@' },
   { type: 'url',        label: 'URL / Link',    icon: '🔗' },
 ];
 
-// Pre-built required fields that are automatically included in every form.
-const REQUIRED_FIELDS = [
-  {
-    field_id: 'required-first-name',
-    field_key: 'first_name',
-    field_label: 'First Name',
-    field_type: 'text',
-    scope: 'common',
-    required: true,
-    help_text: '',
-    validation_rules: { minLength: 1, maxLength: 100 },
-    options: [],
-    _locked: true,
-  },
-  {
-    field_id: 'required-last-name',
-    field_key: 'last_name',
-    field_label: 'Last Name',
-    field_type: 'text',
-    scope: 'common',
-    required: true,
-    help_text: '',
-    validation_rules: { minLength: 1, maxLength: 100 },
-    options: [],
-    _locked: true,
-  },
-];
-
 export default function FormCreationPage() {
+  const router = useRouter();
+  const [editingTemplateId, setEditingTemplateId] = useState(undefined);
   const [userRole, setUserRole] = useState('staff');
   const [initiatives, setInitiatives] = useState([]);
   const [fieldCatalog, setFieldCatalog] = useState({ common: [], initiative_specific: [], staff_only: [] });
   const [selectedInitiative, setSelectedInitiative] = useState('');
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
-  const [selectedFields, setSelectedFields] = useState([...REQUIRED_FIELDS]);
+  const [selectedFields, setSelectedFields] = useState([]);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [questionTab, setQuestionTab] = useState('types');
   const [hoveredSavedQuestionId, setHoveredSavedQuestionId] = useState(null);
   const [removingSavedQuestionId, setRemovingSavedQuestionId] = useState(null);
+  // Questions already on the form being edited: their type is locked and
+  // removing them deletes their answers.
+  const [savedQuestionIds, setSavedQuestionIds] = useState(new Set());
 
   useEffect(() => {
-    Promise.all([
-      apiFetch('/api/initiatives').then(r => r.json()),
+    setEditingTemplateId(new URLSearchParams(window.location.search).get('edit'));
+  }, []);
+
+  useEffect(() => {
+    if (editingTemplateId === undefined) return;
+    setLoading(true);
+    setLoadError('');
+    Promise.allSettled([
+      apiFetch('/api/initiatives').then(async response => {
+        if (!response.ok) throw new Error('Unable to load initiatives');
+        return response.json();
+      }),
       apiFetch('/api/admin/fields').then(r => {
         if (!r.ok) return { common: [], initiative_specific: [], staff_only: [] };
         return r.json();
       }),
-    ]).then(([initData, fieldData]) => {
-      setInitiatives(Array.isArray(initData) ? initData : initData.initiatives || []);
-      setFieldCatalog(fieldData);
+      editingTemplateId
+        ? apiFetch(getEditTemplateUrl(editingTemplateId)).then(async response => {
+            if (!response.ok) throw new Error((await response.json()).error || 'Unable to load form');
+            return response.json();
+          })
+        : Promise.resolve(null),
+    ]).then(([initiativeResult, fieldResult, templateResult]) => {
+      if (initiativeResult.status === 'fulfilled') {
+        const initData = initiativeResult.value;
+        setInitiatives(Array.isArray(initData) ? initData : initData.initiatives || []);
+      }
+      if (fieldResult.status === 'fulfilled') {
+        setFieldCatalog(fieldResult.value);
+      }
+      if (editingTemplateId && templateResult.status === 'rejected') {
+        setLoadError(templateResult.reason?.message || 'Unable to load this form for editing');
+      } else if (templateResult.status === 'fulfilled' && templateResult.value) {
+        const editable = templateToEditableForm(templateResult.value);
+        setFormName(editable.title);
+        setFormDescription(editable.description);
+        setSelectedInitiative(editable.initiativeId);
+        setSelectedFields(editable.questions);
+        setSavedQuestionIds(new Set(editable.questions.map(question => question.field_id)));
+      }
       setLoading(false);
-    }).catch(() => setLoading(false));
-  }, []);
+    });
+  }, [editingTemplateId]);
 
   const availableFields = [
     ...fieldCatalog.common,
@@ -81,10 +94,18 @@ export default function FormCreationPage() {
     ),
   ];
 
+  // Questions already saved to the core or initiative library keep their
+  // classification; any other question can be promoted from the form.
+  const libraryFieldIds = new Set(
+    [...fieldCatalog.common, ...fieldCatalog.initiative_specific]
+      .filter(field => field.is_core_question || field.is_initiative_specific)
+      .map(field => field.field_id)
+  );
+
   const addField = (field) => {
     if (selectedFields.some(sf => sf.field_id === field.field_id)) return;
     const displayType = field.validation_rules?.ui_type || field.field_type;
-    const needsOptions = ['select', 'radio', 'checkbox'].includes(displayType);
+    const needsOptions = ['select', 'radio', 'checkbox'].includes(displayType) || isLikertType(displayType);
     setSelectedFields([...selectedFields, {
       field_id: field.field_id,
       field_key: field.field_key,
@@ -96,20 +117,24 @@ export default function FormCreationPage() {
       is_core_question: !!field.is_core_question,
       is_initiative_specific: !!field.is_initiative_specific,
       validation_rules: null,
-      options: needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
+      options: isLikertType(displayType) ? getLikertLabels(displayType) : needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
     }]);
   };
 
   const removeField = (fieldId) => {
-    const field = selectedFields.find(f => f.field_id === fieldId);
-    if (field?._locked) return; // Cannot remove pre-built required fields
+    if (savedQuestionIds.has(fieldId)) {
+      const question = selectedFields.find(f => f.field_id === fieldId);
+      const confirmed = confirm(
+        `Delete "${question?.field_label || 'this question'}"?\n\n` +
+        'All data relating to this question, including every response to it, will be permanently lost when you save your changes. This cannot be undone.'
+      );
+      if (!confirmed) return;
+    }
     setSelectedFields(selectedFields.filter(f => f.field_id !== fieldId));
   };
 
   const updateFieldConfig = (fieldId, key, value) => {
     setSelectedFields(selectedFields.map(f => {
-      // Prevent toggling required off on locked fields
-      if (f.field_id === fieldId && key === 'required' && f._locked) return f;
       return f.field_id === fieldId ? { ...f, [key]: value } : f;
     }));
   };
@@ -148,20 +173,19 @@ export default function FormCreationPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loadError) return alert('The existing form could not be loaded. Refresh the page before saving.');
     if (!formName.trim()) return alert('Please enter a form name');
     if (!selectedInitiative) return alert('Please select an initiative');
     if (selectedFields.length === 0) return alert('Please add at least one field');
 
-    const customFields = selectedFields.filter(f => !f._locked);
-    if (customFields.length === 0) return alert('Please add at least one custom question beyond the required information fields.');
-
     // Check for fields with empty labels
-    const emptyLabel = selectedFields.find(f => !f._locked && !f.field_label.trim());
+    const emptyLabel = selectedFields.find(f => !f.field_label.trim());
     if (emptyLabel) return alert('Please enter text for all questions before saving.');
 
     // Check for select/radio/checkbox fields with no options
-    const emptyOptions = selectedFields.find(f => ['select', 'radio', 'checkbox'].includes(f.field_type) && (!f.options || f.options.length === 0 || f.options.every(o => !o.trim())));
+    const emptyOptions = selectedFields.find(f => (['select', 'radio', 'checkbox'].includes(f.field_type) || isLikertType(f.field_type)) && (!f.options || f.options.length === 0 || f.options.every(o => !o.trim())));
     if (emptyOptions) return alert(`Please add options for "${emptyOptions.field_label || 'untitled question'}" before saving.`);
+
 
     setSaving(true);
     try {
@@ -187,17 +211,25 @@ export default function FormCreationPage() {
         }),
       };
 
-      const res = await apiFetch('/api/surveys/templates', {
-        method: 'POST',
+      const res = await apiFetch(editingTemplateId ? getEditTemplateUrl(editingTemplateId) : '/api/surveys/templates', {
+        method: editingTemplateId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error((await res.json()).error || 'Unknown error');
-      alert('Form created successfully!');
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Unknown error');
+      const deletedAnswers = result.revision?.deletedAnswerCount || 0;
+      alert(editingTemplateId
+        ? `Form updated successfully!${deletedAnswers > 0 ? ` ${deletedAnswers} response${deletedAnswers !== 1 ? 's' : ''} to removed questions were deleted.` : ''}`
+        : 'Form created successfully!');
+      if (editingTemplateId) {
+        router.push(`/manage-surveys/${editingTemplateId}`);
+        return;
+      }
       setFormName('');
       setFormDescription('');
-      setSelectedFields([...REQUIRED_FIELDS]);
+      setSelectedFields([]);
     } catch (err) {
       alert('Error: ' + (err.message || err));
     } finally {
@@ -215,9 +247,14 @@ export default function FormCreationPage() {
 
   return (
     <PageLayout title="Surveys">
+      {loadError && (
+        <div style={{ padding: '12px 16px', marginBottom: '16px', borderRadius: '8px', border: '1px solid #FECACA', backgroundColor: '#FEF2F2', color: '#991B1B', fontSize: '13px' }}>
+          {loadError}
+        </div>
+      )}
       {/* Page header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#111827', margin: 0 }}>Form Builder</h1>
+        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#111827', margin: 0 }}>{editingTemplateId ? 'Edit Form' : 'Form Builder'}</h1>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
             type="button"
@@ -232,11 +269,11 @@ export default function FormCreationPage() {
           <button
             type="button"
             className="btn-primary"
-            disabled={saving}
+            disabled={saving || !!loadError}
             onClick={handleSubmit}
-            style={{ opacity: saving ? 0.6 : 1 }}
+            style={{ opacity: saving || loadError ? 0.6 : 1 }}
           >
-            {saving ? 'Saving...' : 'Save Form'}
+            {saving ? 'Saving...' : editingTemplateId ? 'Save Changes' : 'Save Form'}
           </button>
         </div>
       </div>
@@ -247,78 +284,17 @@ export default function FormCreationPage() {
         {/* ── Left: Canvas (60%) ── */}
         <div style={{ flex: '3 1 400px', minWidth: 0 }}>
 
-          {/* ── Required Information Section (locked) ── */}
-          <div style={{
-            backgroundColor: '#FEFCE8',
-            border: '1px solid #FDE68A',
-            borderRadius: '12px',
-            padding: '16px 20px',
-            marginBottom: '20px',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <span style={{ fontSize: '14px' }}>🔒</span>
-              <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#92400E', margin: 0 }}>Required Information</h3>
-              <span style={{ fontSize: '11px', color: '#92400E', backgroundColor: '#FEF3C7', padding: '2px 8px', borderRadius: '9999px', fontWeight: 600 }}>Auto-included</span>
-            </div>
-            {selectedFields.filter(f => f._locked).map((sf) => {
-              const typeDef = QUESTION_TYPE_DEFS.find(t => t.type === sf.field_type) || { label: sf.field_type, icon: '?' };
-              return (
-                <div
-                  key={sf.field_id}
-                  style={{
-                    backgroundColor: 'white',
-                    border: '1px solid #E5E7EB',
-                    borderRadius: '10px',
-                    padding: '12px 16px',
-                    marginBottom: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '600', padding: '1px 6px', borderRadius: '9999px', backgroundColor: '#FFF7ED', color: '#E67E22', border: '1px solid #FED7AA' }}>
-                        {typeDef.icon} {typeDef.label}
-                      </span>
-                      <span style={{ fontSize: '11px', color: '#DC2626', fontWeight: '600' }}>required</span>
-                    </div>
-                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#111827' }}>{sf.field_label}</div>
-                    {sf.help_text && (
-                      <div style={{ fontSize: '11px', color: '#6B7280', marginTop: '2px' }}>{sf.help_text}</div>
-                    )}
-                  </div>
-                  <div style={{ height: '28px', flex: '0 0 180px', border: '1px solid #E5E7EB', borderRadius: '6px', backgroundColor: '#F9FAFB' }} />
-                </div>
-              );
-            })}
-          </div>
-
-          {/* ── Custom Questions Section ── */}
+          {/* ── Survey Questions Section ── */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#111827', margin: 0 }}>Custom Questions</h3>
+            <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#111827', margin: 0 }}>Survey Questions</h3>
             <span style={{ fontSize: '11px', color: '#6B7280' }}>
-              {selectedFields.filter(f => !f._locked).length} added
+              {selectedFields.length} added
             </span>
           </div>
 
-          {/* Empty state — only show when no custom questions added */}
-          {selectedFields.every(f => f._locked) && (
-            <div style={{
-              border: '2px dashed #E5E7EB',
-              borderRadius: '12px',
-              padding: '24px',
-              textAlign: 'center',
-              color: '#9CA3AF',
-              marginBottom: '16px',
-            }}>
-              <p style={{ fontWeight: '600', margin: '0 0 4px', fontSize: '13px' }}>Add custom questions from the palette on the right</p>
-              <p style={{ fontSize: '12px', margin: 0 }}>Required information fields are already included above</p>
-            </div>
-          )}
 
-          {/* Custom question blocks (non-locked only) */}
-          {selectedFields.filter(f => !f._locked).map((sf) => {
+          {/* Question blocks */}
+          {selectedFields.map((sf) => {
             const idx = selectedFields.indexOf(sf);
             const typeDef = QUESTION_TYPE_DEFS.find(t => t.type === sf.field_type) || { label: sf.field_type, icon: '?' };
             return (
@@ -366,10 +342,10 @@ export default function FormCreationPage() {
                     )}
                   </div>
                   <input
-                    // id={`question-title-${sf.field_id}`}
-                    // value={sf.field_label}
-                    // onChange={e => updateFieldConfig(sf.field_id, 'field_label', e.target.value)}
-                    placeholder="Enter question title:"
+                    id={`question-title-${sf.field_id}`}
+                    value={sf.field_label}
+                    onChange={e => updateFieldConfig(sf.field_id, 'field_label', e.target.value)}
+                    placeholder="Enter Question Title Here:"
                     style={{
                       fontWeight: '600',
                       fontSize: '14px',
@@ -402,7 +378,7 @@ export default function FormCreationPage() {
                   )}
 
                   {/* Options editor for select/radio/checkbox */}
-                  {['select', 'radio', 'checkbox'].includes(sf.field_type) && (
+                  {(['select', 'radio', 'checkbox'].includes(sf.field_type) || isLikertType(sf.field_type)) && (
                     <div style={{ marginTop: '8px' }}>
                       <div style={{ fontSize: '12px', fontWeight: 600, color: '#6B7280', marginBottom: '6px' }}>
                         Answer Options
@@ -414,6 +390,7 @@ export default function FormCreationPage() {
                           </span>
                           <input
                             value={opt}
+                            disabled={isLikertType(sf.field_type)}
                             onChange={(e) => {
                               const newOpts = [...(sf.options || [])];
                               newOpts[optIdx] = e.target.value;
@@ -423,6 +400,7 @@ export default function FormCreationPage() {
                           />
                           <button
                             type="button"
+                            disabled={isLikertType(sf.field_type)}
                             onClick={() => {
                               const newOpts = (sf.options || []).filter((_, i) => i !== optIdx);
                               updateFieldConfig(sf.field_id, 'options', newOpts);
@@ -431,34 +409,61 @@ export default function FormCreationPage() {
                           >x</button>
                         </div>
                       ))}
-                      <button
+                      {!isLikertType(sf.field_type) && <button
                         type="button"
                         onClick={() => {
                           const newOpts = [...(sf.options || []), `Option ${(sf.options || []).length + 1}`];
                           updateFieldConfig(sf.field_id, 'options', newOpts);
                         }}
                         style={{ fontSize: '12px', color: '#E67E22', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', fontWeight: 500 }}
-                      >+ Add Option</button>
+                      >+ Add Option</button>}
                     </div>
                   )}
 
                   {/* Config row */}
                   <div style={{ display: 'flex', gap: '12px', marginTop: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: sf.required ? '#DC2626' : '#6B7280', cursor: sf._locked ? 'not-allowed' : 'pointer', fontWeight: sf.required ? 600 : 400 }}>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280' }}
+                      title={savedQuestionIds.has(sf.field_id) ? 'The type of an existing question cannot be changed' : undefined}
+                    >
+                      Type
+                      <select
+                        value={sf.field_type}
+                        disabled={savedQuestionIds.has(sf.field_id)}
+                        onChange={event => {
+                          const nextType = event.target.value;
+                          const needsOptions = ['select', 'radio', 'checkbox'].includes(nextType) || isLikertType(nextType);
+                          setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
+                            ...field,
+                            field_type: nextType,
+                            options: isLikertType(nextType)
+                              ? getLikertLabels(nextType)
+                              : needsOptions
+                              ? (!field.options || field.options.length === 0 ? ['Option 1', 'Option 2'] : field.options)
+                              : [],
+                          } : field));
+                        }}
+                        style={{ padding: '3px 6px', border: '1px solid #E5E7EB', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontSize: '12px' }}
+                      >
+                        {QUESTION_TYPE_DEFS.map(definition => (
+                          <option key={definition.type} value={definition.type}>{definition.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: sf.required ? '#DC2626' : '#6B7280', cursor: 'pointer', fontWeight: sf.required ? 600 : 400 }}>
                       <input
                         type="checkbox"
                         checked={sf.required}
                         onChange={e => updateFieldConfig(sf.field_id, 'required', e.target.checked)}
-                        disabled={sf._locked}
                         style={{ accentColor: '#E67E22' }}
                       />
-                      Required {sf._locked && '(locked)'}
+                      Required
                     </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: typeof sf.field_id === 'number' ? 'default' : 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: libraryFieldIds.has(sf.field_id) ? 'default' : 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={sf.is_core_question === true}
-                        disabled={typeof sf.field_id === 'number'}
+                        disabled={libraryFieldIds.has(sf.field_id)}
                         onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
                           ...field,
                           is_core_question: e.target.checked,
@@ -470,11 +475,11 @@ export default function FormCreationPage() {
                       />
                       Core question
                     </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: typeof sf.field_id === 'number' ? 'default' : 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: libraryFieldIds.has(sf.field_id) ? 'default' : 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={sf.is_initiative_specific === true}
-                        disabled={typeof sf.field_id === 'number' || !selectedInitiative}
+                        disabled={libraryFieldIds.has(sf.field_id) || !selectedInitiative}
                         onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
                           ...field,
                           is_initiative_specific: e.target.checked,
@@ -493,7 +498,7 @@ export default function FormCreationPage() {
                   type="button"
                   onClick={() => removeField(sf.field_id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', fontSize: '18px', padding: '0', flexShrink: 0 }}
-                  title="Remove question"
+                  title={savedQuestionIds.has(sf.field_id) ? 'Remove question (deletes its responses when saved)' : 'Remove question'}
                 >×</button>
               </div>
             );
@@ -510,7 +515,7 @@ export default function FormCreationPage() {
             marginBottom: '8px',
           }}>
             <span style={{ fontSize: '20px', display: 'block', marginBottom: '4px' }}>+</span>
-            <span style={{ fontSize: '13px' }}>Choose a question type from the right to add it here</span>
+            <span style={{ fontSize: '13px' }}> Create a Question or Select a Saved Question Using the Palette on the Right</span>
           </div>
         </div>
 
@@ -658,18 +663,18 @@ export default function FormCreationPage() {
                       type="button"
                       onClick={() => {
                         const syntheticId = `synthetic-${t.type}-${Date.now()}`;
-                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type);
+                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type) || isLikertType(t.type);
                         setSelectedFields(prev => [...prev, {
                           field_id: syntheticId,
                           field_key: t.type,
-                          field_label: t.label,
+                          field_label: '',
                           field_type: t.type,
                           scope: 'common',
                           required: true,
                           is_core_question: false,
                           is_initiative_specific: false,
                           validation_rules: null,
-                          options: needsOptions ? ['Option 1', 'Option 2'] : [],
+                          options: isLikertType(t.type) ? getLikertLabels(t.type) : needsOptions ? ['Option 1', 'Option 2'] : [],
                         }]);
                       }}
                       style={{
@@ -714,40 +719,30 @@ export default function FormCreationPage() {
                         ? 'Questions saved for the selected initiative. Click to add.'
                         : 'Shared questions from your organization. Click to add.'}
                     </p>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {libraryQuestions.map(f => {
                         const isAdded = selectedFields.some(sf => sf.field_id === f.field_id);
+                        const displayType = f.validation_rules?.ui_type || f.field_type;
+                        const typeLabel = QUESTION_TYPE_DEFS.find(t => t.type === displayType)?.label || displayType;
                         return (
                           <div
                             key={f.field_id}
                             onMouseEnter={() => setHoveredSavedQuestionId(f.field_id)}
                             onMouseLeave={() => setHoveredSavedQuestionId(null)}
-                            style={{
-                              padding: '0 8px 0 12px',
-                              borderRadius: '9999px',
-                              fontSize: '12px',
-                              border: `1px solid ${isAdded ? '#E5E7EB' : f.scope === 'common' ? '#BFDBFE' : '#FED7AA'}`,
-                              backgroundColor: isAdded ? '#F3F4F6' : f.scope === 'common' ? '#EFF6FF' : '#FFF7ED',
-                              color: isAdded ? '#9CA3AF' : f.scope === 'common' ? '#2563EB' : '#E67E22',
-                              opacity: isAdded ? 0.6 : 1,
-                              fontWeight: '500',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                            }}
+                            style={{ display: 'flex', alignItems: 'center', border: '1px solid #E5E7EB', borderRadius: '6px', opacity: isAdded ? 0.5 : 1 }}
                           >
                             <button
                               type="button"
                               onClick={() => addField(f)}
                               disabled={isAdded}
                               style={{
-                                display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 0',
-                                border: 'none', background: 'none', color: 'inherit', font: 'inherit',
-                                cursor: isAdded ? 'default' : 'pointer',
+                                flex: 1, minWidth: 0, display: 'flex', justifyContent: 'space-between', gap: '12px',
+                                padding: '8px 10px', border: 'none', background: 'none', font: 'inherit', fontSize: '12px',
+                                textAlign: 'left', cursor: isAdded ? 'default' : 'pointer',
                               }}
                             >
-                              {isAdded && <span>&#10003;</span>}
-                              <span>{f.field_label}</span>
+                              <span style={{ color: '#111827' }}>{isAdded && '✓ '}{f.field_label}</span>
+                              <span style={{ color: '#6B7280', whiteSpace: 'nowrap', borderLeft: '1px solid #E5E7EB', paddingLeft: '12px' }}>{typeLabel}</span>
                             </button>
                             <button
                               type="button"
@@ -756,17 +751,9 @@ export default function FormCreationPage() {
                               onClick={(event) => removeSavedQuestion(f, event)}
                               disabled={removingSavedQuestionId === f.field_id}
                               style={{
-                                marginLeft: '3px',
-                                padding: '2px',
-                                border: 'none',
-                                background: 'none',
-                                color: 'inherit',
-                                fontSize: '14px',
-                                lineHeight: 1,
-                                fontWeight: 700,
+                                padding: '0 8px', border: 'none', background: 'none', color: '#9CA3AF', fontSize: '14px',
                                 opacity: hoveredSavedQuestionId === f.field_id ? 1 : 0,
                                 pointerEvents: hoveredSavedQuestionId === f.field_id ? 'auto' : 'none',
-                                transition: 'opacity 0.15s ease',
                                 cursor: removingSavedQuestionId === f.field_id ? 'wait' : 'pointer',
                               }}
                             >×</button>

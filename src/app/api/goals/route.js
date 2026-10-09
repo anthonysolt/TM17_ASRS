@@ -8,7 +8,11 @@ import {
   performGoalUpdate,
   ALLOWED_FIELDS,
   computeGoalScore,
+  rebalanceGoalWeights,
 } from '@/lib/goals/perform-goal-update';
+import { computeQuestionSourceValue, syncQuestionSourcedGoals } from '@/lib/goals/question-source';
+import { queryInitiativeQuestions } from '@/lib/query-helpers';
+import { ANALYSIS_METHOD_VALUES } from '@/lib/analysis-methods';
 
 function sameUpdatedAt(clientVal, serverVal) {
   return String(clientVal ?? '').trim() === String(serverVal ?? '').trim();
@@ -21,6 +25,27 @@ function isValidWeight(weight) {
     && numericWeight >= 0
     && numericWeight <= 100
     && Math.abs(hundredths - Math.round(hundredths)) < 1e-8;
+}
+
+/**
+ * Validate an optional question source. Both fields empty means a manual goal.
+ * Returns { source: { rootFieldId, method } | null } or { error }.
+ */
+function parseQuestionSource(initiativeId, rootFieldId, method) {
+  const hasQuestion = rootFieldId !== undefined && rootFieldId !== null && rootFieldId !== '';
+  const hasMethod = method !== undefined && method !== null && method !== '';
+  if (!hasQuestion && !hasMethod) return { source: null };
+  if (!hasQuestion || !hasMethod) {
+    return { error: 'Select both a survey question and an analysis method' };
+  }
+  if (!ANALYSIS_METHOD_VALUES.includes(method)) {
+    return { error: 'Invalid analysis method' };
+  }
+  const questionId = Number(rootFieldId);
+  if (!Number.isInteger(questionId) || queryInitiativeQuestions(db, initiativeId, [questionId]).length === 0) {
+    return { error: 'The selected question does not belong to this initiative' };
+  }
+  return { source: { rootFieldId: questionId, method } };
 }
 
 // Compute overall weighted score across all goals
@@ -72,6 +97,9 @@ export async function GET(request) {
       );
     }
 
+    // Refresh question-sourced current values before scoring.
+    const sources = syncQuestionSourcedGoals(db, initiativeId, { userEmail: auth.user.email });
+
     const goals = db.prepare(`
       SELECT g.*, i.initiative_name
       FROM initiative_goal g
@@ -82,6 +110,7 @@ export async function GET(request) {
 
     const goalsWithScores = goals.map((goal) => ({
       ...goal,
+      source: sources.get(goal.goal_id) || null,
       score: parseFloat(computeGoalScore(goal).toFixed(2)),
       daysUntilDeadline: getDaysUntilDeadline(goal.deadline),
     }));
@@ -120,12 +149,14 @@ export async function POST(request) {
       weight,
       scoring_method,
       deadline,
+      source_root_field_id,
+      source_method,
     } = body;
 
     // Validate required fields
-    if (!initiative_id || !goal_name || !target_metric || target_value == null || weight == null || weight === '' || !scoring_method) {
+    if (!initiative_id || !goal_name || target_value == null || weight == null || weight === '' || !scoring_method) {
       return NextResponse.json(
-        { error: 'Missing required fields: initiative_id, goal_name, target_metric, target_value, weight, scoring_method' },
+        { error: 'Missing required fields: initiative_id, goal_name, target_value, weight, scoring_method' },
         { status: 400 }
       );
     }
@@ -146,6 +177,16 @@ export async function POST(request) {
       );
     }
 
+    const parsedSource = parseQuestionSource(initiative_id, source_root_field_id, source_method);
+    if (parsedSource.error) {
+      return NextResponse.json({ error: parsedSource.error }, { status: 400 });
+    }
+    const { source } = parsedSource;
+    // A question-sourced goal starts from the computed value, not a typed one.
+    const startingValue = source
+      ? (computeQuestionSourceValue(db, initiative_id, source.rootFieldId, source.method).value ?? 0)
+      : (current_value || 0);
+
     // Verify initiative exists
     const initiative = db.prepare(
       'SELECT initiative_id FROM initiative WHERE initiative_id = ?'
@@ -159,21 +200,28 @@ export async function POST(request) {
     }
 
     const result = db.prepare(`
-      INSERT INTO initiative_goal (initiative_id, goal_name, description, target_metric, target_value, current_value, weight, scoring_method, deadline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO initiative_goal (initiative_id, goal_name, description, target_metric, target_value, current_value, weight, scoring_method, deadline, source_root_field_id, source_method)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       initiative_id,
       goal_name.trim(),
       (description || '').trim(),
-      target_metric.trim(),
+      (target_metric || '').trim(),
       target_value,
-      current_value || 0,
+      startingValue,
       weight,
       scoring_method,
-      deadline || null
+      deadline || null,
+      source?.rootFieldId ?? null,
+      source?.method ?? null
     );
 
-    const newGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(result.lastInsertRowid);
+    // Proportionally rebalance the other goals around the new goal's weight
+    // (same behavior as editing a weight). A first goal is set to 100%.
+    const createdGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(result.lastInsertRowid);
+    const rebalanced = rebalanceGoalWeights(db, createdGoal, weight);
+    db.prepare('UPDATE initiative_goal SET weight = ? WHERE goal_id = ?').run(rebalanced.editedWeight, createdGoal.goal_id);
+    const newGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(createdGoal.goal_id);
 
     // Record initial progress snapshot
     db.prepare(`
@@ -196,16 +244,19 @@ export async function POST(request) {
       payload: {
         initiative_id,
         goal_name: goal_name.trim(),
-        target_metric: target_metric.trim(),
+        target_metric: (target_metric || '').trim(),
         target_value,
         scoring_method,
         deadline: deadline || null,
+        source_root_field_id: source?.rootFieldId ?? null,
+        source_method: source?.method ?? null,
+        adjusted_goal_weights: rebalanced.adjustedGoals,
       },
     });
 
     return NextResponse.json({
       success: true,
-      adjustedGoals: result.adjustedGoals,
+      adjustedGoals: rebalanced.adjustedGoals,
       goal: {
         ...newGoal,
         score: parseFloat(computeGoalScore(newGoal).toFixed(2)),
@@ -251,6 +302,25 @@ export async function PUT(request) {
     for (const field of ALLOWED_FIELDS) {
       if (updates[field] !== undefined) proposedPatch[field] = updates[field];
     }
+
+    // Validate a changed question source; a sourced goal's current value is
+    // always computed, so a typed current_value is ignored.
+    if (proposedPatch.source_root_field_id !== undefined || proposedPatch.source_method !== undefined) {
+      const parsedSource = parseQuestionSource(
+        existing.initiative_id,
+        proposedPatch.source_root_field_id !== undefined ? proposedPatch.source_root_field_id : existing.source_root_field_id,
+        proposedPatch.source_method !== undefined ? proposedPatch.source_method : existing.source_method
+      );
+      if (parsedSource.error) {
+        return NextResponse.json({ error: parsedSource.error }, { status: 400 });
+      }
+      proposedPatch.source_root_field_id = parsedSource.source?.rootFieldId ?? null;
+      proposedPatch.source_method = parsedSource.source?.method ?? null;
+    }
+    const isSourced = (proposedPatch.source_root_field_id !== undefined
+      ? proposedPatch.source_root_field_id
+      : existing.source_root_field_id) != null;
+    if (isSourced) delete proposedPatch.current_value;
 
     if (Object.keys(proposedPatch).length === 0) {
       return NextResponse.json(
@@ -331,7 +401,11 @@ export async function PUT(request) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
-    const updatedGoal = result.goal;
+    let updatedGoal = result.goal;
+    if (isSourced) {
+      syncQuestionSourcedGoals(db, existing.initiative_id, { userEmail: auth.user.email });
+      updatedGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(goal_id);
+    }
     return NextResponse.json({
       success: true,
       goal: {
@@ -376,6 +450,10 @@ export async function DELETE(request) {
 
     db.prepare('DELETE FROM initiative_goal WHERE goal_id = ?').run(goalId);
 
+    // Proportionally scale the remaining goals back up to 100%
+    // (same behavior as editing a weight down to 0).
+    const rebalanced = rebalanceGoalWeights(db, existing, 0);
+
     // ── Audit log ──
     logAudit(db, {
       event: 'goal.deleted',
@@ -387,11 +465,13 @@ export async function DELETE(request) {
         initiative_id: existing.initiative_id,
         target_metric: existing.target_metric,
         target_value: existing.target_value,
+        adjusted_goal_weights: rebalanced.adjustedGoals,
       },
     });
 
     return NextResponse.json({
       success: true,
+      adjustedGoals: rebalanced.adjustedGoals,
       message: `Goal ${goalId} deleted`,
     });
   } catch (error) {

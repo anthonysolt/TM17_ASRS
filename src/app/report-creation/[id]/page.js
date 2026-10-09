@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
 import ReportDashboard from '@/components/ReportDashboard';
 import { getInitiatives, getReportData, getTrendData } from '@/lib/data-service';
@@ -138,6 +139,10 @@ export default function ReportViewPage() {
 
   return (
     <PageLayout title={report ? (report.name || 'Untitled Report') : 'Create Report'}>
+      <div style={{ marginBottom: '1rem' }}>
+        <Link href="/reporting" className="btn-outline">← Back to Reporting</Link>
+      </div>
+
       {/* Report name + description header */}
       {report && (
         <div style={{ marginBottom: '1.5rem' }}>

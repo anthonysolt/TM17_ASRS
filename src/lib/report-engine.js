@@ -373,19 +373,19 @@ export function validateTrendConfig(trendConfig, availableAttributes = []) {
     return { valid: false, error: 'Trend configuration supports up to 5 variables.' };
   }
 
+  // Match on trimmed, case-insensitive names but keep the attribute's exact
+  // spelling, since question labels can carry stray whitespace and are used
+  // verbatim as row keys.
+  const attrKey = (a) => String(a).trim().toLowerCase();
   const canonicalMap = {};
   availableAttributes.forEach((attr) => {
-    canonicalMap[String(attr).toLowerCase()] = attr;
+    canonicalMap[attrKey(attr)] = attr;
   });
 
-  const normalizedVariables = cleanedVariables.map((v) => {
-    const canonical = canonicalMap[v.toLowerCase()];
-    return canonical || v;
-  });
+  const normalizedVariables = cleanedVariables.map((v) => canonicalMap[attrKey(v)] || v);
 
   if (availableAttributes.length > 0) {
-    const availableLower = new Set(availableAttributes.map((a) => String(a).toLowerCase()));
-    const invalid = normalizedVariables.find((v) => !availableLower.has(String(v).toLowerCase()));
+    const invalid = normalizedVariables.find((v) => !(attrKey(v) in canonicalMap));
     if (invalid) {
       return { valid: false, error: `Invalid trend variable: ${invalid}` };
     }
@@ -579,6 +579,7 @@ export function computeTrendData(filteredData, trendConfig, context = {}) {
     attributes,
     direction,
     magnitude,
+    signedChangePct: Math.round(avgSigned * 10) / 10,
     confidenceScore,
     timePeriod: 'Current dataset',
     enabledDisplay: trendConfig.enabledDisplay !== false,

@@ -6,44 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import ReasonModal from '@/components/ReasonModal';
 
-const ATTRIBUTE_CATALOG = [
-  'Grade',
-  'School',
-  'Interest Level',
-  'Career Awareness',
-  'Participation Count',
-  'Session Rating',
-  'Completion Status',
-  'Safety Score',
-  'Project Completion',
-  'Team Size',
-  'Robot Performance',
-  'Attendance Rate',
-  'Reading Level',
-  'Award Type',
-  'Improvement Score',
-  'Semester',
-  'Bags Collected',
-  'Families Helped',
-  'Volunteer Count',
-  'Donation Value',
-  'Event Date',
-  'Event Type',
-  'Personal Best',
-  'Team Placement',
-  'Practice Attendance',
-  'Season',
-  'Proposal Topic',
-  'Score',
-  'Award Level',
-  'Reviewer Rating',
-  'Submission Date',
-  'Product Category',
-  'Innovation Score',
-  'Presentation Rating',
-  'Feasibility Score',
-];
-
 function statusPill(status) {
   if (!status) return <span className="pill pill-gray">Draft</span>;
   const s = status.toLowerCase();
@@ -139,7 +101,6 @@ function InitiativeCreationContent() {
           const init = data.initiative;
           setName(init.name || '');
           setDescription(init.description || '');
-          setSelectedAttributes(init.attributes || []);
           setStatus(init.settings?.status || 'Active');
           setIsPublic(!!init.settings?.isPublic);
           if (init.questions && init.questions.length > 0) {
@@ -171,9 +132,6 @@ function InitiativeCreationContent() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [categoryId, setCategoryId] = useState('');
-  const [selectedAttributes, setSelectedAttributes] = useState([]);
-  const [customAttributes, setCustomAttributes] = useState([]);
-  const [newAttribute, setNewAttribute] = useState('');
   const [addQuestions, setAddQuestions] = useState(false);
   const [questions, setQuestions] = useState(['']);
   const [status, setStatus] = useState('Active');
@@ -182,33 +140,6 @@ function InitiativeCreationContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
-  const allAttributes = [...ATTRIBUTE_CATALOG, ...customAttributes];
-
-  const handleAttributeToggle = (attribute) => {
-    setSelectedAttributes((prev) =>
-      prev.includes(attribute)
-        ? prev.filter((a) => a !== attribute)
-        : [...prev, attribute]
-    );
-  };
-
-  const handleAddCustomAttribute = () => {
-    const trimmed = newAttribute.trim();
-    if (!trimmed) return;
-
-    const alreadyExists = allAttributes.some(
-      (attribute) => attribute.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (alreadyExists) {
-      setMessage('This attribute already exists.');
-      return;
-    }
-
-    setCustomAttributes((prev) => [...prev, trimmed]);
-    setSelectedAttributes((prev) => [...prev, trimmed]);
-    setNewAttribute('');
-    setMessage('');
-  };
 
   const handleQuestionChange = (index, value) => {
     const updated = [...questions];
@@ -235,12 +166,6 @@ function InitiativeCreationContent() {
       return;
     }
 
-    if (selectedAttributes.length === 0) {
-      setMessage('Please select at least one attribute.');
-      setIsSubmitting(false);
-      return;
-    }
-
     const cleanedQuestions = addQuestions
       ? questions.map((q) => q.trim()).filter(Boolean)
       : [];
@@ -254,7 +179,6 @@ function InitiativeCreationContent() {
         payload: {
           name: name.trim(),
           description: description.trim(),
-          attributes: selectedAttributes,
           questions: cleanedQuestions,
           settings: { status: effectiveStatus, isPublic },
           categoryId: categoryId || null,
@@ -325,9 +249,6 @@ function InitiativeCreationContent() {
           setName('');
           setDescription('');
           setCategoryId('');
-          setSelectedAttributes([]);
-          setCustomAttributes([]);
-          setNewAttribute('');
           setAddQuestions(false);
           setQuestions(['']);
           setStatus('Active');
@@ -427,8 +348,7 @@ function InitiativeCreationContent() {
               <thead>
                 <tr>
                   <th>Initiative</th>
-                  <th>Category</th>
-                  <th>Created</th>
+                  <th>Last Updated</th>
                   <th>Submissions</th>
                   <th>Participants</th>
                   <th>Status</th>
@@ -441,8 +361,7 @@ function InitiativeCreationContent() {
                   return (
                     <tr key={initiative.id}>
                       <td style={{ fontWeight: 600, color: '#111827' }}>{initiative.name}</td>
-                      <td style={{ color: '#6B7280' }}>{initiative.category || '—'}</td>
-                      <td style={{ color: '#6B7280' }}>{formatDate(initiative.created_at)}</td>
+                      <td style={{ color: '#6B7280' }}>{formatDate(initiative.updated_at || initiative.created_at)}</td>
                       <td style={{ color: '#6B7280' }}>{initiative.submission_count ?? '—'}</td>
                       <td style={{ color: '#6B7280' }}>{initiative.participant_count ?? '—'}</td>
                       <td>{statusPill(s)}</td>
@@ -568,82 +487,6 @@ function InitiativeCreationContent() {
                 onFocus={(e) => { e.target.style.borderColor = '#E67E22'; e.target.style.boxShadow = '0 0 0 3px rgba(230,126,34,.1)'; }}
                 onBlur={(e) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
               />
-            </div>
-
-            {/* ── Attributes ── */}
-            <div style={{ marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Attributes <span style={{ color: '#c62828' }}>*</span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: '400', color: '#9CA3AF', marginLeft: '0.5rem' }}>
-                    {selectedAttributes.length} selected
-                  </span>
-                </label>
-                {userRole === 'admin' && (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input
-                      type="text"
-                      value={newAttribute}
-                      onChange={(e) => setNewAttribute(e.target.value)}
-                      placeholder="Custom attribute…"
-                      style={{ ...inputStyle, width: 180, marginBottom: 0, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
-                      onFocus={(e) => { e.target.style.borderColor = '#E67E22'; e.target.style.boxShadow = '0 0 0 3px rgba(230,126,34,.1)'; }}
-                      onBlur={(e) => { e.target.style.borderColor = '#E5E7EB'; e.target.style.boxShadow = 'none'; }}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddCustomAttribute}
-                      className="btn-outline"
-                      style={{ whiteSpace: 'nowrap', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
-                    >
-                      Add
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div style={{
-                maxHeight: '200px',
-                overflowY: 'auto',
-                border: '1px solid #E5E7EB',
-                borderRadius: '8px',
-                padding: '0.5rem',
-                backgroundColor: '#F9FAFB',
-              }}>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: '0.25rem',
-                }}>
-                  {allAttributes.map((attribute) => {
-                    const isSelected = selectedAttributes.includes(attribute);
-                    return (
-                      <label
-                        key={attribute}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '6px',
-                          backgroundColor: isSelected ? '#FFF7ED' : 'transparent',
-                          border: isSelected ? '1px solid #FDBA74' : '1px solid transparent',
-                          transition: 'all 0.15s ease',
-                          fontSize: '0.85rem',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleAttributeToggle(attribute)}
-                          style={{ marginRight: '0.5rem', cursor: 'pointer', accentColor: '#E67E22' }}
-                        />
-                        <span style={{ color: '#111827' }}>{attribute}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
 
             {/* ── Settings row ── */}

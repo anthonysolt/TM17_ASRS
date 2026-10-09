@@ -55,7 +55,8 @@ export default function StepConfig({ initiatives, reportConfig, onChange }) {
         />
       </div>
 
-      {/* AI Insights */}
+      {/*
+      AI Insights (disabled)
       <div style={{ marginTop: '1.25rem' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
           <input
@@ -72,6 +73,7 @@ export default function StepConfig({ initiatives, reportConfig, onChange }) {
           Generates a narrative summary, key insights, and recommendations. Adds ~10 seconds to report generation.
         </p>
       </div>
+      */}
     </div>
   );
 }

@@ -6,9 +6,10 @@ import PageLayout from '@/components/PageLayout';
 import InitiativeSelector from '@/components/InitiativeSelector';
 import ReportDashboard from '@/components/ReportDashboard';
 import ReasonModal from '@/components/ReasonModal';
-import { normalizeSnapshot } from '@/lib/report-snapshot';
+import { normalizeSnapshot, parseReportForDashboard } from '@/lib/report-snapshot';
 import { apiFetch } from '@/lib/api/client';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
+import { buildReportFileName } from '@/lib/download-filename';
 
 const PDF_DISPLAY_OPTIONS = [
   { value: 'charts', label: 'Charts only' },
@@ -48,6 +49,7 @@ export default function ReportingPage() {
   const [showSocialMenu, setShowSocialMenu] = useState(false);
   const [pdfDisplayMode, setPdfDisplayMode] = useState('both');
   const [pdfLayoutMode, setPdfLayoutMode] = useState('side-by-side');
+  const [selectedDownloadFormat, setSelectedDownloadFormat] = useState(null);
 
   const [allReports, setAllReports] = useState([]);
   const [expandedReportId, setExpandedReportId] = useState(null);
@@ -294,39 +296,6 @@ export default function ReportingPage() {
     }
   }
 
-  function parseReportForDashboard(report) {
-    let parsed = null;
-    try {
-      parsed = typeof report.report_data === 'string'
-        ? JSON.parse(report.report_data)
-        : report.report_data;
-    } catch {
-      parsed = null;
-    }
-
-    const normalized = normalizeSnapshot(parsed);
-    if (!normalized) return { reportData: null, trendData: [], initiative: null };
-
-    const results = normalized.results;
-    return {
-      reportData: {
-        reportId: results.reportId,
-        initiativeId: normalized.config.initiativeId,
-        initiativeName: results.initiativeName,
-        generatedDate: results.generatedDate,
-        summary: results.summary,
-        chartData: results.chartData,
-        tableData: results.filteredTableData,
-        explainability: results.explainability,
-      },
-      trendData: results.trendData || [],
-      initiative: {
-        id: normalized.config.initiativeId,
-        name: results.initiativeName,
-      },
-    };
-  }
-
   const publishedReports = useMemo(
     () => allReports.filter((r) => (r.status || '').toLowerCase() === 'published'),
     [allReports]
@@ -546,7 +515,7 @@ export default function ReportingPage() {
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${(report.name || 'report').replace(/\s+/g, '_')}.csv`;
+    link.download = `${buildReportFileName(report.name)}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
@@ -930,7 +899,9 @@ export default function ReportingPage() {
 
   function handleDownload(format) {
     if (!reportData || !selectedInitiative) return;
-    const fileName = `${selectedInitiative.name.replace(/\s+/g, '_')}_Report`;
+    setSelectedDownloadFormat(format);
+    const currentReport = allReports.find((r) => String(r.id) === String(reportDbId));
+    const fileName = buildReportFileName(currentReport?.name || `${selectedInitiative.name} Report`);
     if (format === 'csv') {
       const rows = reportData.tableData || [];
       if (rows.length === 0) return;
@@ -968,7 +939,6 @@ export default function ReportingPage() {
         `<div class="summary-card"><p class="label">Average Rating</p><p class="value">${escapeHtml(reportData.summary?.averageRating)}/5</p></div>`,
         `<div class="summary-card"><p class="label">Completion Rate</p><p class="value">${escapeHtml(reportData.summary?.completionRate)}%</p></div>`,
         '</div>',
-        `<h2>Data Table</h2>${tableHtml}</body></html>`,
       ].join('\n');
       const blob = new Blob([htmlContent], { type: 'text/html' });
       const link = document.createElement('a');
@@ -1047,9 +1017,9 @@ export default function ReportingPage() {
       )}
 
       {activeTab === 'published' && (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           {isStaffOrAdmin && publishedReports.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
+            <div style={{ marginBottom: '1.5rem', order: 2 }}>
               <p style={{ color: '#6B7280', fontSize: '0.9rem', marginBottom: '1rem' }}>
                 Showing all published reports. Click a report to view its full dashboard.
               </p>
@@ -1110,6 +1080,7 @@ export default function ReportingPage() {
                               trendData={parsed.trendData}
                               selectedInitiative={parsed.initiative}
                               userRole={userRole}
+                              showDataTable={false}
                             />
                           ) : (
                             <p style={{ color: '#9CA3AF', textAlign: 'center', padding: '1rem' }}>No report data available.</p>
@@ -1124,7 +1095,7 @@ export default function ReportingPage() {
           )}
 
           {isStaffOrAdmin && publishedReports.length === 0 && !isLoading && (
-            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#9CA3AF', marginBottom: '1.5rem' }}>
+            <div className="card" style={{ textAlign: 'center', padding: '3rem', color: '#9CA3AF', marginBottom: '1.5rem', order: 2 }}>
               <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>No published reports yet.</p>
               <p style={{ fontSize: '0.9rem' }}>Switch to the Management tab to publish reports.</p>
             </div>
@@ -1249,7 +1220,7 @@ export default function ReportingPage() {
           )}
 
           {isStaffOrAdmin && (
-            <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '1.5rem', marginTop: '0.5rem' }}>
+            <div style={{ paddingBottom: '1.5rem', marginBottom: '0.5rem', order: 1 }}>
               <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#374151', marginBottom: '1rem' }}>Report Viewer</h3>
               <section style={{ marginBottom: '1.5rem' }}>
                 <InitiativeSelector
@@ -1314,7 +1285,7 @@ export default function ReportingPage() {
                       <div style={{ fontWeight: 600 }}>Download Report</div>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>PDF Content</span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Content</span>
                           <select value={pdfDisplayMode} onChange={(e) => setPdfDisplayMode(e.target.value)} style={{ padding: '0.5rem 0.65rem', fontSize: '0.9rem', borderRadius: '6px', border: '1px solid #E5E7EB', backgroundColor: '#fff', outline: 'none' }}>
                             {PDF_DISPLAY_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
@@ -1322,16 +1293,22 @@ export default function ReportingPage() {
                           </select>
                         </div>
                         <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>PDF Layout</span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Layout</span>
                           <select value={pdfLayoutMode} onChange={(e) => setPdfLayoutMode(e.target.value)} disabled={pdfDisplayMode !== 'both'} style={{ padding: '0.5rem 0.65rem', fontSize: '0.9rem', borderRadius: '6px', border: '1px solid #E5E7EB', backgroundColor: '#fff', opacity: pdfDisplayMode === 'both' ? 1 : 0.6, outline: 'none' }}>
                             {PDF_LAYOUT_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
                           </select>
                         </div>
-                        <button className="btn-primary" onClick={() => handleDownload('pdf')}>PDF</button>
-                        {DOWNLOAD_FORMATS.map((format) => (
-                          <button key={format} className="btn-outline" onClick={() => handleDownload(format)}>{format.toUpperCase()}</button>
+                        {['pdf', ...DOWNLOAD_FORMATS].map((format) => (
+                          <button
+                            key={format}
+                            className={selectedDownloadFormat === format ? 'btn-primary' : 'btn-outline'}
+                            aria-pressed={selectedDownloadFormat === format}
+                            onClick={() => handleDownload(format)}
+                          >
+                            {format.toUpperCase()}
+                          </button>
                         ))}
                         <button className="btn-outline" onClick={handleCreateShareableLink}>Share Link</button>
                         {userRole === 'admin' && (
@@ -1369,6 +1346,8 @@ export default function ReportingPage() {
                     userRole={userRole}
                     reportDbId={reportDbId}
                     preloadedInsights={aiInsights}
+                    // Survey responses data table hidden on the Reporting page.
+                    showDataTable={false}
                   />
                 </>
               ) : !isLoading ? (
@@ -1379,7 +1358,7 @@ export default function ReportingPage() {
               ) : null}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {activeTab === 'management' && isStaffOrAdmin && (
@@ -1427,7 +1406,7 @@ export default function ReportingPage() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</label>
+              <label style={{ fontSize: '0.78rem', fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status Filter</label>
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 {STATUS_FILTERS.map((s) => (
                   <button
@@ -1625,7 +1604,7 @@ export default function ReportingPage() {
                         <span style={{ fontSize: '0.8rem', fontWeight: 400, color: '#6B7280', marginLeft: '0.5rem' }}>{formatDate(report.created_at)}</span>
                       </h3>
                       {rd ? (
-                        <ReportDashboard reportData={rd} trendData={td} selectedInitiative={init} userRole={userRole} />
+                        <ReportDashboard reportData={rd} trendData={td} selectedInitiative={init} userRole={userRole} showDataTable={false} />
                       ) : (
                         <p style={{ color: '#9CA3AF', padding: '1rem', textAlign: 'center' }}>No report data available.</p>
                       )}

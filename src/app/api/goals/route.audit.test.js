@@ -177,7 +177,7 @@ describe('Goals route audit logging', () => {
       const query = String(sql || '');
       if (query.includes('SELECT * FROM initiative_goal WHERE goal_id')) return { get: () => existingGoal };
       if (query.includes('DELETE FROM initiative_goal')) return { run: vi.fn() };
-      return { get: vi.fn(), run: vi.fn() };
+      return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
 
     const res = await DELETE(new Request('http://localhost:3000/api/goals?goalId=7', { method: 'DELETE' }));

@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageLayout from '@/components/PageLayout';
 import PublicSiteHeader from '@/components/PublicSiteHeader';
+import InitiativeReportLinks from '@/components/InitiativeReportLinks';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
+import { getInitiativeReportsPath } from '@/lib/initiative-slug';
 
 const QUICK_ACTIONS = [
   { href: '/initiative-creation', icon: '📋', title: 'Create Initiative',   description: 'Set up a new initiative and configure scoring' },
@@ -98,9 +100,14 @@ export default function Home() {
             </h2>
             <p style={{ color: '#6B7280', fontSize: 13, marginTop: 4 }}>{dateStr}</p>
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Link href="/reporting" className="btn-primary">View Reports</Link>
+        </div>
+
+        {/* ── Initiative Report Pages ── */}
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card-header">
+            <span className="card-title">Initiative Reports</span>
           </div>
+          <InitiativeReportLinks />
         </div>
 
         {/* ── Published Reports ── */}
@@ -124,7 +131,7 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {publishedReports.map((report) => (
-                    <tr key={report.id || report.report_id} style={{ cursor: 'pointer' }} onClick={() => router.push('/reporting')}>
+                    <tr key={report.id || report.report_id} style={{ cursor: 'pointer' }} onClick={() => router.push(report.initiative_name ? getInitiativeReportsPath(report.initiative_name) : '/reporting')}>
                       <td style={{ fontWeight: 500, color: '#E67E22' }}>{report.title || report.name || 'Report'}</td>
                       <td>{report.initiative_name || '—'}</td>
                       <td style={{ color: '#6B7280' }}>{formatDate(report.published_at || report.created_at)}</td>
@@ -207,7 +214,6 @@ export default function Home() {
               <thead>
                 <tr>
                   <th>Initiative</th>
-                  <th>Category</th>
                   <th>Participants</th>
                   <th>Avg Score</th>
                   <th>Status</th>
@@ -222,7 +228,6 @@ export default function Home() {
                         {initiative.name}
                       </Link>
                     </td>
-                    <td>{initiative.category || '—'}</td>
                     <td>{initiative.participant_count ?? 0}</td>
                     <td>{(initiative.avg_score ?? 0).toFixed(1)}</td>
                     <td>{statusPill(initiative.status)}</td>
@@ -246,11 +251,11 @@ function LandingPage() {
       <main className="public-site-hero">
         <h1 className="public-site-hero-title">ASRS Initiatives Reporting System</h1>
         <p className="public-site-hero-lede">
-          Browse published initiative reports. Staff and administrators can log in above for the full workspace.
+          Browse published reports for each initiative. Staff and administrators can log in above for the full workspace.
         </p>
-        <Link href="/reporting" className="btn-primary public-site-hero-cta">
-          View published reports
-        </Link>
+        <div style={{ width: '100%', maxWidth: 720 }}>
+          <InitiativeReportLinks />
+        </div>
       </main>
     </div>
   );

@@ -11,6 +11,7 @@ export default function SurveyDistributionPage() {
   // Auth state
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [selectedQrFormat, setSelectedQrFormat] = useState(null);
 
   // Form state
   const [templates, setTemplates] = useState([]);
@@ -665,6 +666,13 @@ export default function SurveyDistributionPage() {
           <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
             {qrResult ? (
               <>
+                              <div style={{ textAlign: 'center', maxWidth: '200px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '4px' }}>Survey Link:</div>
+                  <div style={{ fontSize: '12px', color: '#6B7280', wordBreak: 'break-all' }}>
+                    {qrResult.targetUrl}
+                  </div>
+                </div>
+                
                 <div style={{
                   width: '200px', height: '200px', borderRadius: '12px',
                   border: '1px solid #E5E7EB', overflow: 'hidden', backgroundColor: '#fff',
@@ -676,20 +684,21 @@ export default function SurveyDistributionPage() {
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                   />
                 </div>
-                <div style={{ fontSize: '12px', color: '#6B7280', textAlign: 'center', maxWidth: '200px', wordBreak: 'break-all' }}>
-                  {qrResult.targetUrl}
-                </div>
+
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>QR Code Downloads</div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
-                    className="btn-primary"
-                    onClick={() => handleDownloadQR(qrResult.qrCodeKey, 'png')}
+                    className={selectedQrFormat === 'png' ? 'btn-primary' : 'btn-outline'}
+                    aria-pressed={selectedQrFormat === 'png'}
+                    onClick={() => { setSelectedQrFormat('png'); handleDownloadQR(qrResult.qrCodeKey, 'png'); }}
                     style={{ padding: '6px 14px', fontSize: '13px' }}
                   >
-                    Download PNG
+                    PNG
                   </button>
                   <button
-                    className="btn-outline"
-                    onClick={() => handleDownloadQR(qrResult.qrCodeKey, 'svg')}
+                    className={selectedQrFormat === 'svg' ? 'btn-primary' : 'btn-outline'}
+                    aria-pressed={selectedQrFormat === 'svg'}
+                    onClick={() => { setSelectedQrFormat('svg'); handleDownloadQR(qrResult.qrCodeKey, 'svg'); }}
                     style={{ padding: '6px 14px', fontSize: '13px' }}
                   >
                     SVG

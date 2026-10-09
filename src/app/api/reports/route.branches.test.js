@@ -120,19 +120,34 @@ describe('/api/reports branch coverage', () => {
     validateReportUpdatePayloadMock.mockReturnValue({ valid: true, value: { id: 1, name: 'N', description: 'D', status: 'completed' } });
     prepareMock.mockImplementation((sql) => {
       const query = String(sql || '');
-      if (query.includes('SELECT id FROM reports WHERE id = ?')) return { get: () => undefined };
+      if (query.includes('SELECT id, status FROM reports WHERE id = ?')) return { get: () => undefined };
       return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
     expect((await PUT(putReq({ id: 1 }))).status).toBe(404);
 
     prepareMock.mockImplementation((sql) => {
       const query = String(sql || '');
-      if (query.includes('SELECT id FROM reports WHERE id = ?')) return { get: () => ({ id: 1 }) };
+      if (query.includes('SELECT id, status FROM reports WHERE id = ?')) return { get: () => ({ id: 1 }) };
       if (query.includes('UPDATE reports SET')) return { run: vi.fn() };
       if (query.includes('WHERE r.id = ?')) return { get: () => ({ id: 1 }) };
       return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
     expect((await PUT(putReq({ id: 1 }))).status).toBe(200);
+
+    validateReportUpdatePayloadMock.mockReturnValue({ valid: true, value: { id: 1, status: 'published' } });
+    const updateRun = vi.fn();
+    prepareMock.mockImplementation((sql) => {
+      const query = String(sql || '');
+      if (query.includes('SELECT id, status FROM reports WHERE id = ?')) return { get: () => ({ id: 1, status: 'archived' }) };
+      if (query.includes('UPDATE reports SET')) {
+        expect(query).toContain('published_at = ?');
+        return { run: updateRun };
+      }
+      if (query.includes('WHERE r.id = ?')) return { get: () => ({ id: 1 }) };
+      return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
+    });
+    expect((await PUT(putReq({ id: 1 }))).status).toBe(200);
+    expect(updateRun).toHaveBeenCalledWith('published', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), 1);
 
     validateReportUpdatePayloadMock.mockImplementationOnce(() => { throw new Error('boom'); });
     expect((await PUT(putReq({ id: 1 }))).status).toBe(500);

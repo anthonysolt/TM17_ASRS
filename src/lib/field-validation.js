@@ -1,3 +1,5 @@
+import { isLikertType } from '@/lib/forms/likert-scales';
+
 /**
  * Validate a single field value against its type and optional rules.
  * @param {*} value - The submitted value
@@ -55,6 +57,14 @@ export function validateFieldValue(value, field, rules) {
 
 function validateType(value, field) {
   const { field_type } = field;
+  if (isLikertType(field_type)) {
+    const numericValue = Number(value);
+    const validOptions = Array.isArray(field.options) ? field.options.map(Number) : [];
+    if (!Number.isFinite(numericValue) || (validOptions.length > 0 && !validOptions.includes(numericValue))) {
+      return 'Please select a valid Likert response';
+    }
+    return null;
+  }
   if (field_type === 'date') {
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
       const d = new Date(value);

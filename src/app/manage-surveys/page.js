@@ -266,11 +266,11 @@ export default function ManageSurveysPage() {
         )}
       </div>
 
-      {/* Survey Templates Grid */}
+      {/* Existing Surveys list */}
       {templates.length > 0 && (
         <div style={{ marginBottom: '24px' }}>
-          <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#111827', marginBottom: '16px' }}>Survey Templates</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+          <h2 style={{ fontSize: '15px', fontWeight: '600', color: '#111827', marginBottom: '16px' }}>Active Surveys</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {templates.map((template) => {
               const status = templateStatus(template);
               const responseCount = responseCountByTemplate(template.id);
@@ -330,6 +330,12 @@ export default function ManageSurveysPage() {
                       style={{ background: '#fff', border: '1px solid #E67E22', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#E67E22', padding: '5px 12px' }}
                     >
                       Manage
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); router.push(`/manage-surveys/${template.id}/edit`); }}
+                      style={{ background: '#fff', border: '1px solid #059669', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#059669', padding: '5px 12px' }}
+                    >
+                      Edit
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); openSurvey(template.id); }}

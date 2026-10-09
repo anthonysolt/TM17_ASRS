@@ -9,6 +9,8 @@ const ALLOWED_FIELDS = [
   'weight',
   'scoring_method',
   'deadline',
+  'source_root_field_id',
+  'source_method',
 ];
 
 function isValidWeight(weight) {

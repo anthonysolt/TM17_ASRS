@@ -310,6 +310,10 @@ export default function ReportCreationPage() {
 
   return (
     <PageLayout title="Create Report">
+      <div style={{ marginBottom: '1rem' }}>
+        <Link href="/reporting" className="btn-outline">← Back to Reporting</Link>
+      </div>
+
       {/* Step wizard card */}
       <div className="card" style={{ padding: '32px', marginBottom: '2rem' }}>
         {/* Step Indicator */}

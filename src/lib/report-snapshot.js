@@ -83,3 +83,39 @@ export function normalizeSnapshot(rawSnapshot) {
     generatedAt: rawSnapshot.generatedAt || null,
   };
 }
+
+// Converts a stored report row (with its report_data snapshot) into the props
+// ReportDashboard expects.
+export function parseReportForDashboard(report) {
+  let parsed = null;
+  try {
+    parsed = typeof report?.report_data === 'string'
+      ? JSON.parse(report.report_data)
+      : report?.report_data;
+  } catch {
+    parsed = null;
+  }
+
+  const normalized = normalizeSnapshot(parsed);
+  if (!normalized) return { reportData: null, trendData: [], aiInsights: null, initiative: null };
+
+  const results = normalized.results;
+  return {
+    reportData: {
+      reportId: results.reportId,
+      initiativeId: normalized.config.initiativeId,
+      initiativeName: results.initiativeName,
+      generatedDate: results.generatedDate,
+      summary: results.summary,
+      chartData: results.chartData,
+      tableData: results.filteredTableData,
+      explainability: results.explainability,
+    },
+    trendData: results.trendData || [],
+    aiInsights: results.aiInsights || null,
+    initiative: {
+      id: normalized.config.initiativeId,
+      name: results.initiativeName,
+    },
+  };
+}

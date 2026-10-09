@@ -56,10 +56,12 @@ export function createTestDb() {
       submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
       initiative_id INTEGER NOT NULL,
       form_id INTEGER NOT NULL,
+      form_version_id INTEGER,
       submitted_at TEXT DEFAULT (datetime('now')),
       submitted_by_user_id INTEGER,
       FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id),
-      FOREIGN KEY (form_id) REFERENCES form(form_id)
+      FOREIGN KEY (form_id) REFERENCES form(form_id),
+      FOREIGN KEY (form_version_id) REFERENCES form_version(form_version_id)
     );
 
     CREATE TABLE submission_value (
@@ -86,6 +88,8 @@ export function createTestDb() {
       current_value REAL NOT NULL DEFAULT 0,
       weight REAL NOT NULL DEFAULT 1.0,
       scoring_method TEXT NOT NULL DEFAULT 'linear',
+      source_root_field_id INTEGER,
+      source_method TEXT,
       deadline TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
@@ -122,6 +126,18 @@ export function createTestDb() {
       is_published INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE form_version (
+      form_version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      form_id INTEGER NOT NULL,
+      version_number INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      published_at TEXT,
+      created_by_user_id INTEGER,
+      UNIQUE(form_id, version_number),
+      FOREIGN KEY (form_id) REFERENCES form(form_id) ON DELETE CASCADE
+    );
+
     CREATE TABLE field (
       field_id INTEGER PRIMARY KEY AUTOINCREMENT,
       field_key TEXT NOT NULL UNIQUE,
@@ -141,15 +157,43 @@ export function createTestDb() {
     CREATE TABLE form_questions (
       form_question_id INTEGER PRIMARY KEY AUTOINCREMENT,
       form_id INTEGER NOT NULL,
+      form_version_id INTEGER,
       field_id INTEGER NOT NULL,
+      root_field_id INTEGER,
       display_order INTEGER NOT NULL DEFAULT 0,
       required INTEGER NOT NULL DEFAULT 0,
       is_hidden INTEGER NOT NULL DEFAULT 0,
       help_text TEXT,
       validation_rules TEXT,
       FOREIGN KEY (form_id) REFERENCES form(form_id) ON DELETE CASCADE,
+      FOREIGN KEY (form_version_id) REFERENCES form_version(form_version_id) ON DELETE CASCADE,
       FOREIGN KEY (field_id) REFERENCES field(field_id) ON DELETE CASCADE
     );
+
+    -- Mirrors the migration backfill: a question's root defaults to its own field.
+    CREATE TRIGGER form_questions_default_root AFTER INSERT ON form_questions
+    WHEN NEW.root_field_id IS NULL
+    BEGIN
+      UPDATE form_questions SET root_field_id = NEW.field_id WHERE form_question_id = NEW.form_question_id;
+    END;
+
+    CREATE TABLE form_version_questions (
+      form_version_id INTEGER NOT NULL,
+      form_question_id INTEGER NOT NULL,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (form_version_id, form_question_id),
+      FOREIGN KEY (form_version_id) REFERENCES form_version(form_version_id) ON DELETE CASCADE,
+      FOREIGN KEY (form_question_id) REFERENCES form_questions(form_question_id) ON DELETE CASCADE
+    );
+
+    -- Mirrors the 20261008_shared_form_questions.sql backfill: fixtures that
+    -- still set form_version_id/display_order get their version membership.
+    CREATE TRIGGER form_questions_default_version AFTER INSERT ON form_questions
+    WHEN NEW.form_version_id IS NOT NULL
+    BEGIN
+      INSERT OR IGNORE INTO form_version_questions (form_version_id, form_question_id, display_order)
+      VALUES (NEW.form_version_id, NEW.form_question_id, NEW.display_order);
+    END;
 
     CREATE TABLE field_options (
       field_option_id INTEGER PRIMARY KEY AUTOINCREMENT,

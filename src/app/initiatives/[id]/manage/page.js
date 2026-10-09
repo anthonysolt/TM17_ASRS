@@ -7,44 +7,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
 
-const ATTRIBUTE_CATALOG = [
-  'Grade',
-  'School',
-  'Interest Level',
-  'Career Awareness',
-  'Participation Count',
-  'Session Rating',
-  'Completion Status',
-  'Safety Score',
-  'Project Completion',
-  'Team Size',
-  'Robot Performance',
-  'Attendance Rate',
-  'Reading Level',
-  'Award Type',
-  'Improvement Score',
-  'Semester',
-  'Bags Collected',
-  'Families Helped',
-  'Volunteer Count',
-  'Donation Value',
-  'Event Date',
-  'Event Type',
-  'Personal Best',
-  'Team Placement',
-  'Practice Attendance',
-  'Season',
-  'Proposal Topic',
-  'Score',
-  'Award Level',
-  'Reviewer Rating',
-  'Submission Date',
-  'Product Category',
-  'Innovation Score',
-  'Presentation Rating',
-  'Feasibility Score',
-];
-
 export default function InitiativeManagePage({ params }) {
   const { id } = use(params);
   const router = useRouter();
@@ -74,10 +36,6 @@ export default function InitiativeManagePage({ params }) {
   // ── Edit form state ──────────────────────────────────
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
-  const [editCategoryId, setEditCategoryId] = useState('');
-  const [editSelectedAttributes, setEditSelectedAttributes] = useState([]);
-  const [editCustomAttributes, setEditCustomAttributes] = useState([]);
-  const [editNewAttribute, setEditNewAttribute] = useState('');
   const [editStatus, setEditStatus] = useState('Active');
   const [editIsPublic, setEditIsPublic] = useState(false);
   const [editAddQuestions, setEditAddQuestions] = useState(false);
@@ -86,9 +44,6 @@ export default function InitiativeManagePage({ params }) {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [showReasonModal, setShowReasonModal] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
-  const [dbCategories, setDbCategories] = useState([]);
-
-  const allAttributes = [...ATTRIBUTE_CATALOG, ...editCustomAttributes];
 
   useEffect(() => {
     if (!hydrated) return;
@@ -97,28 +52,16 @@ export default function InitiativeManagePage({ params }) {
     loadData();
   }, [hydrated, user, id]);
 
-  // Fetch categories for the edit form
-  useEffect(() => {
-    apiFetch('/api/categories')
-      .then(r => r.json())
-      .then(data => {
-        if (data.categories) setDbCategories(data.categories);
-      })
-      .catch(err => console.error('Error fetching categories:', err));
-  }, []);
-
   async function loadData() {
     setLoading(true);
     setError('');
     try {
-      const [initRes, membersRes, catRes] = await Promise.all([
+      const [initRes, membersRes] = await Promise.all([
         apiFetch(`/api/initiatives/${id}`),
         apiFetch(`/api/initiatives/${id}/members`),
-        apiFetch(`/api/initiative-categories?initiative_id=${id}`),
       ]);
       const initData = await initRes.json();
       const membersData = await membersRes.json();
-      const catData = await catRes.json();
 
       if (initRes.ok && initData.initiative) {
         const init = initData.initiative;
@@ -127,17 +70,12 @@ export default function InitiativeManagePage({ params }) {
         // Populate edit form
         setEditName(init.name || '');
         setEditDescription(init.description || '');
-        setEditSelectedAttributes(init.attributes || []);
         setEditStatus(init.settings?.status || 'Active');
         setEditIsPublic(!!init.settings?.isPublic);
         if (init.questions && init.questions.length > 0) {
           setEditAddQuestions(true);
           setEditQuestions(init.questions);
         }
-
-        // Detect custom attributes (ones not in ATTRIBUTE_CATALOG)
-        const customs = (init.attributes || []).filter(a => !ATTRIBUTE_CATALOG.includes(a));
-        if (customs.length > 0) setEditCustomAttributes(customs);
       } else {
         setError('Initiative not found');
       }
@@ -150,9 +88,6 @@ export default function InitiativeManagePage({ params }) {
         setAnonymousSubmissions(membersData.anonymousSubmissions || 0);
       }
 
-      if (catData.relationships && catData.relationships.length > 0) {
-        setEditCategoryId(String(catData.relationships[0].category_id));
-      }
     } catch (err) {
       setError('Failed to load initiative data: ' + err.message);
     }
@@ -206,25 +141,6 @@ export default function InitiativeManagePage({ params }) {
   }
 
   // ── Edit form handlers ──────────────────────────────
-  function handleAttributeToggle(attribute) {
-    setEditSelectedAttributes(prev =>
-      prev.includes(attribute) ? prev.filter(a => a !== attribute) : [...prev, attribute]
-    );
-  }
-
-  function handleAddCustomAttribute() {
-    const trimmed = editNewAttribute.trim();
-    if (!trimmed) return;
-    if (allAttributes.some(a => a.toLowerCase() === trimmed.toLowerCase())) {
-      setEditMessage('This attribute already exists.');
-      return;
-    }
-    setEditCustomAttributes(prev => [...prev, trimmed]);
-    setEditSelectedAttributes(prev => [...prev, trimmed]);
-    setEditNewAttribute('');
-    setEditMessage('');
-  }
-
   function handleQuestionChange(index, value) {
     const updated = [...editQuestions];
     updated[index] = value;
@@ -241,12 +157,6 @@ export default function InitiativeManagePage({ params }) {
       setEditSubmitting(false);
       return;
     }
-    if (editSelectedAttributes.length === 0) {
-      setEditMessage('Please select at least one attribute.');
-      setEditSubmitting(false);
-      return;
-    }
-
     const cleanedQuestions = editAddQuestions
       ? editQuestions.map(q => q.trim()).filter(Boolean)
       : [];
@@ -255,10 +165,8 @@ export default function InitiativeManagePage({ params }) {
       payload: {
         name: editName.trim(),
         description: editDescription.trim(),
-        attributes: editSelectedAttributes,
         questions: cleanedQuestions,
         settings: { status: editStatus, isPublic: editIsPublic },
-        categoryId: editCategoryId || null,
       },
     });
     setShowReasonModal(true);
@@ -270,8 +178,7 @@ export default function InitiativeManagePage({ params }) {
     if (!pendingAction) return;
     setEditSubmitting(true);
     try {
-      const { categoryId: selectedCategoryId, ...rest } = pendingAction.payload;
-      const body = { ...rest, reasonType, reasonText };
+      const body = { ...pendingAction.payload, reasonType, reasonText };
       const response = await apiFetch(`/api/initiatives/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -280,28 +187,6 @@ export default function InitiativeManagePage({ params }) {
       const data = await response.json();
 
       if (response.ok) {
-        // Handle category assignment
-        const initiativeId = Number(id);
-        // Remove existing categories
-        const existingCats = await apiFetch(`/api/initiative-categories?initiative_id=${initiativeId}`).then(r => r.json());
-        if (existingCats.relationships) {
-          for (const rel of existingCats.relationships) {
-            await apiFetch('/api/initiative-categories', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ initiative_id: initiativeId, category_id: rel.category_id }),
-            });
-          }
-        }
-        // Assign new category if selected
-        if (selectedCategoryId) {
-          await apiFetch('/api/initiative-categories', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ initiative_id: initiativeId, category_id: Number(selectedCategoryId) }),
-          });
-        }
-
         setEditMessage('Initiative updated successfully!');
         setSuccessMessage('Initiative updated successfully!');
         loadData();
@@ -477,8 +362,8 @@ export default function InitiativeManagePage({ params }) {
           )}
 
           <form onSubmit={handleEditSubmit}>
-            {/* Row 1: Name + Category */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            {/* Name */}
+            <div style={{ marginBottom: '1rem' }}>
               <div>
                 <label style={labelStyle}>
                   Initiative Name <span style={{ color: '#c62828' }}>*</span>
@@ -493,22 +378,6 @@ export default function InitiativeManagePage({ params }) {
                   {...focusHandlers}
                 />
               </div>
-              <div>
-                <label style={labelStyle}>Category</label>
-                <select
-                  value={editCategoryId}
-                  onChange={(e) => setEditCategoryId(e.target.value)}
-                  style={{ ...inputStyle, cursor: 'pointer' }}
-                  {...focusHandlers}
-                >
-                  <option value="">Select category...</option>
-                  {dbCategories.map((cat) => (
-                    <option key={cat.category_id} value={cat.category_id}>
-                      {cat.category_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
 
             {/* Description */}
@@ -522,81 +391,6 @@ export default function InitiativeManagePage({ params }) {
                 style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
                 {...focusHandlers}
               />
-            </div>
-
-            {/* Attributes */}
-            <div style={{ marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <label style={{ ...labelStyle, marginBottom: 0 }}>
-                  Attributes <span style={{ color: '#c62828' }}>*</span>
-                  <span style={{ fontSize: '0.8rem', fontWeight: '400', color: '#9CA3AF', marginLeft: '0.5rem' }}>
-                    {editSelectedAttributes.length} selected
-                  </span>
-                </label>
-                {user?.user_type === 'admin' && (
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input
-                      type="text"
-                      value={editNewAttribute}
-                      onChange={(e) => setEditNewAttribute(e.target.value)}
-                      placeholder="Custom attribute..."
-                      style={{ ...inputStyle, width: 180, marginBottom: 0, fontSize: '0.85rem', padding: '0.4rem 0.6rem' }}
-                      {...focusHandlers}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddCustomAttribute}
-                      className="btn-outline"
-                      style={{ whiteSpace: 'nowrap', fontSize: '0.85rem', padding: '0.4rem 0.75rem' }}
-                    >
-                      Add
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div style={{
-                maxHeight: '200px',
-                overflowY: 'auto',
-                border: '1px solid #E5E7EB',
-                borderRadius: '8px',
-                padding: '0.5rem',
-                backgroundColor: '#F9FAFB',
-              }}>
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: '0.25rem',
-                }}>
-                  {allAttributes.map((attribute) => {
-                    const isSelected = editSelectedAttributes.includes(attribute);
-                    return (
-                      <label
-                        key={attribute}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '6px',
-                          backgroundColor: isSelected ? '#FFF7ED' : 'transparent',
-                          border: isSelected ? '1px solid #FDBA74' : '1px solid transparent',
-                          transition: 'all 0.15s ease',
-                          fontSize: '0.85rem',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleAttributeToggle(attribute)}
-                          style={{ marginRight: '0.5rem', cursor: 'pointer', accentColor: '#E67E22' }}
-                        />
-                        <span style={{ color: '#111827' }}>{attribute}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
             </div>
 
             {/* Settings row */}

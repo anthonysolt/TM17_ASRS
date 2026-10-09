@@ -33,14 +33,17 @@ describe('/api/surveys/templates integration', () => {
     const formId = Number(state.db.prepare(
       'INSERT INTO form (initiative_id, form_name, description, is_published) VALUES (1, ?, ?, 1)'
     ).run('Student Pulse', 'weekly check-in').lastInsertRowid);
+    const versionId = Number(state.db.prepare(
+      "INSERT INTO form_version (form_id, version_number, status) VALUES (?, 1, 'published')"
+    ).run(formId).lastInsertRowid);
 
     const fieldId = Number(state.db.prepare(
       'INSERT INTO field (field_key, field_label, field_type, scope) VALUES (?, ?, ?, ?)' 
     ).run('pulse_1', 'How are you?', 'choice', 'common').lastInsertRowid);
 
     state.db.prepare(
-      'INSERT INTO form_questions (form_id, field_id, display_order, required, help_text) VALUES (?, ?, 0, 1, ?)'
-    ).run(formId, fieldId, 'Select one');
+      'INSERT INTO form_questions (form_id, form_version_id, field_id, display_order, required, help_text) VALUES (?, ?, ?, 0, 1, ?)'
+    ).run(formId, versionId, fieldId, 'Select one');
 
     state.db.prepare(
       'INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?), (?, ?, ?, ?)'
@@ -111,6 +114,7 @@ describe('/api/surveys/templates integration', () => {
     ).get('Q1');
 
     expect(formCount).toBe(1);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM form_version WHERE form_id = ?').get(payload.id).c).toBe(1);
     expect(fieldCount).toBe(2);
     expect(optionCount).toBe(2);
     expect(reusableQuestion.is_core_question).toBe(1);
@@ -149,6 +153,44 @@ describe('/api/surveys/templates integration', () => {
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM form_questions WHERE field_id = ?').get(fieldId).c).toBe(2);
   });
 
+  test('POST stores Likert labels with numeric option values and a numeric field type', async () => {
+    process.env.NODE_ENV = 'development';
+    const tokens = createSessionForRank(state.db, { rank: 100 });
+    const response = await POST(new Request('http://localhost:3000/api/surveys/templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthedRequestHeaders(tokens, { csrf: true }),
+      },
+      body: JSON.stringify({
+        title: 'Likert Survey',
+        initiative_id: 1,
+        questions: [{
+          question: 'How much do you agree?',
+          type: 'likert_agreement',
+          required: true,
+          options: ['Strongly Disagree', 'Disagree', 'Some What Disagree', 'Neutral', 'Some What Agree', 'Agree', 'Strongly Agree'],
+        }],
+      }),
+    }));
+
+    expect(response.status).toBe(201);
+    const field = state.db.prepare('SELECT field_id, field_type, validation_rules FROM field WHERE field_label = ?').get('How much do you agree?');
+    expect(field.field_type).toBe('number');
+    expect(JSON.parse(field.validation_rules).ui_type).toBe('likert_agreement');
+    expect(state.db.prepare(
+      'SELECT option_value, display_label FROM field_options WHERE field_id = ? ORDER BY display_order'
+    ).all(field.field_id)).toEqual([
+      { option_value: '1', display_label: 'Strongly Disagree' },
+      { option_value: '2', display_label: 'Disagree' },
+      { option_value: '3', display_label: 'Some What Disagree' },
+      { option_value: '4', display_label: 'Neutral' },
+      { option_value: '5', display_label: 'Some What Agree' },
+      { option_value: '6', display_label: 'Agree' },
+      { option_value: '7', display_label: 'Strongly Agree' },
+    ]);
+  });
+
   test('DELETE template removes template and related submissions/reports', async () => {
     const formId = Number(state.db.prepare(
       'INSERT INTO form (initiative_id, form_name, description, is_published) VALUES (1, ?, ?, 1)'
@@ -170,5 +212,34 @@ describe('/api/surveys/templates integration', () => {
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM form WHERE form_id = ?').get(formId).c).toBe(0);
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM surveys WHERE id = ?').get(surveyId).c).toBe(0);
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE survey_id = ?').get(surveyId).c).toBe(0);
+  });
+
+  test('DELETE template removes its own fields and options but keeps core and initiative fields', async () => {
+    const formId = Number(state.db.prepare(
+      'INSERT INTO form (initiative_id, form_name, description, is_published) VALUES (1, ?, ?, 1)'
+    ).run('Field Cleanup', 'x').lastInsertRowid);
+    const addField = (key, core, initiative) => Number(state.db.prepare(`
+      INSERT INTO field (field_key, field_label, field_type, scope, initiative_id, is_core_question, is_initiative_specific)
+      VALUES (?, ?, 'select', ?, ?, ?, ?)
+    `).run(key, key, initiative ? 'initiative_specific' : 'common', initiative ? 1 : null, core, initiative).lastInsertRowid);
+    const ownId = addField('cleanup_own', 0, 0);
+    const coreId = addField('cleanup_core', 1, 0);
+    const initiativeId = addField('cleanup_initiative', 0, 1);
+    for (const fieldId of [ownId, coreId, initiativeId]) {
+      state.db.prepare('INSERT INTO form_questions (form_id, field_id, root_field_id) VALUES (?, ?, ?)').run(formId, fieldId, fieldId);
+      state.db.prepare("INSERT INTO field_options (field_id, option_value, display_label) VALUES (?, 'a', 'A')").run(fieldId);
+    }
+
+    const res = await DELETE(new Request(`http://localhost:3000/api/surveys/templates?templateId=${formId}`, { method: 'DELETE' }));
+    expect(res.status).toBe(200);
+
+    const fieldCount = (id) => state.db.prepare('SELECT COUNT(*) AS c FROM field WHERE field_id = ?').get(id).c;
+    const optionCount = (id) => state.db.prepare('SELECT COUNT(*) AS c FROM field_options WHERE field_id = ?').get(id).c;
+    expect(fieldCount(ownId)).toBe(0);
+    expect(optionCount(ownId)).toBe(0);
+    expect(fieldCount(coreId)).toBe(1);
+    expect(optionCount(coreId)).toBe(1);
+    expect(fieldCount(initiativeId)).toBe(1);
+    expect(optionCount(initiativeId)).toBe(1);
   });
 });

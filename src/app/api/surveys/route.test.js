@@ -85,14 +85,17 @@ describe('/api/surveys integration', () => {
     const formId = Number(state.db.prepare(
       'INSERT INTO form (initiative_id, form_name, is_published) VALUES (?, ?, 1)'
     ).run(initiativeId, 'Typed Survey').lastInsertRowid);
+    const versionId = Number(state.db.prepare(
+      "INSERT INTO form_version (form_id, version_number, status) VALUES (?, 1, 'published')"
+    ).run(formId).lastInsertRowid);
     const selectId = Number(state.db.prepare(
       "INSERT INTO field (field_key, field_label, field_type, scope, validation_rules) VALUES (?, ?, 'text', 'common', ?)"
     ).run('school', 'School', JSON.stringify({ ui_type: 'select' })).lastInsertRowid);
     const radioId = Number(state.db.prepare(
       "INSERT INTO field (field_key, field_label, field_type, scope, validation_rules) VALUES (?, ?, 'text', 'common', ?)"
     ).run('recommend', 'Recommend?', JSON.stringify({ ui_type: 'radio' })).lastInsertRowid);
-    state.db.prepare('INSERT INTO form_questions (form_id, field_id, display_order, required) VALUES (?, ?, ?, 1)').run(formId, selectId, 0);
-    state.db.prepare('INSERT INTO form_questions (form_id, field_id, display_order, required) VALUES (?, ?, ?, 1)').run(formId, radioId, 1);
+    state.db.prepare('INSERT INTO form_questions (form_id, form_version_id, field_id, display_order, required) VALUES (?, ?, ?, ?, 1)').run(formId, versionId, selectId, 0);
+    state.db.prepare('INSERT INTO form_questions (form_id, form_version_id, field_id, display_order, required) VALUES (?, ?, ?, ?, 1)').run(formId, versionId, radioId, 1);
     state.db.prepare('INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?)').run(selectId, 'Rutgers', 'Rutgers', 0);
     state.db.prepare('INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, ?)').run(radioId, 'Yes', 'Yes', 0);
 

@@ -1,3 +1,5 @@
+import { ANALYSIS_METHOD_VALUES } from '@/lib/analysis-methods';
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -65,7 +67,7 @@ export function validateReportCreatePayload(body) {
     if (questionIds.has(id)) {
       return { valid: false, error: 'A survey question cannot be selected more than once' };
     }
-    if (!['delta_halves', 'linear_slope', 'most_popular', 'average', 'least_common'].includes(method)) {
+    if (!ANALYSIS_METHOD_VALUES.includes(method)) {
       return { valid: false, error: 'Invalid question analysis method' };
     }
     questionIds.add(id);

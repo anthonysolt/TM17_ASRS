@@ -11,7 +11,8 @@ vi.mock('@/lib/db', () => ({
   initializeDatabase: vi.fn(),
 }));
 
-vi.mock('@/lib/query-helpers', () => ({
+vi.mock('@/lib/query-helpers', async (importOriginal) => ({
+  ...(await importOriginal()),
   queryTableData: (...args) => queryTableDataMock(...args),
 }));
 
@@ -52,9 +53,12 @@ describe('/api/initiatives/:id/report-data GET integration', () => {
       "INSERT INTO field (field_key, field_label, field_type) VALUES ('grade', 'Grade', 'select')"
     ).run().lastInsertRowid;
 
+    const versionId = state.db.prepare(
+      "INSERT INTO form_version (form_id, version_number, status) VALUES (?, 1, 'published')"
+    ).run(formId).lastInsertRowid;
     state.db.prepare(
-      'INSERT INTO form_questions (form_id, field_id, display_order) VALUES (?, ?, 0)'
-    ).run(formId, fieldId);
+      'INSERT INTO form_questions (form_id, form_version_id, field_id, display_order) VALUES (?, ?, ?, 0)'
+    ).run(formId, versionId, fieldId);
     const formQuestionId = state.db.prepare(
       'SELECT form_question_id FROM form_questions WHERE form_id = ? AND field_id = ?'
     ).get(formId, fieldId).form_question_id;

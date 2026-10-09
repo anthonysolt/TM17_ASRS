@@ -7,23 +7,49 @@ function getPivotValueColumn(fieldType) {
 }
 
 /**
+ * queryInitiativeQuestions — One row per question (root_field_id) used by an
+ * initiative's forms, described by its most recent iteration. Every revision
+ * of a question shares a root_field_id, so the question appears once and its
+ * answers from all revisions are reported together. `field_id` is the root id.
+ */
+export function queryInitiativeQuestions(database, initiativeId, rootFieldIds = null) {
+  if (Array.isArray(rootFieldIds) && rootFieldIds.length === 0) return [];
+  const rootFilter = Array.isArray(rootFieldIds)
+    ? `AND fq.root_field_id IN (${rootFieldIds.map(() => '?').join(', ')})`
+    : '';
+
+  return database.prepare(`
+    SELECT fq.root_field_id AS field_id, f.field_key, f.field_label, f.field_type,
+           fvq.display_order, fv.version_number
+    FROM form_version_questions fvq
+    JOIN form_questions fq ON fq.form_question_id = fvq.form_question_id
+    JOIN field f ON f.field_id = fq.field_id
+    JOIN form fm ON fm.form_id = fq.form_id
+    JOIN form_version fv ON fv.form_version_id = fvq.form_version_id
+    WHERE fm.initiative_id = ? ${rootFilter}
+      AND (fvq.form_version_id, fvq.form_question_id) = (
+        SELECT latest_fvq.form_version_id, latest_fvq.form_question_id
+        FROM form_version_questions latest_fvq
+        JOIN form_questions latest ON latest.form_question_id = latest_fvq.form_question_id
+        JOIN form latest_form ON latest_form.form_id = latest.form_id
+        WHERE latest.root_field_id = fq.root_field_id
+          AND latest_form.initiative_id = fm.initiative_id
+        ORDER BY latest_fvq.form_version_id DESC, latest_fvq.form_question_id DESC
+        LIMIT 1
+      )
+    ORDER BY fvq.display_order, fq.root_field_id
+  `).all(initiativeId, ...(rootFieldIds || []));
+}
+
+/**
  * queryTableData — Pivots EAV submission_value rows into flat table rows
  * for a given initiative.
  *
  * Returns rows like: [{ id: 1, grade: "7th", school: "Lincoln MS", ... }]
  */
 export function queryTableData(database, initiativeId) {
-  // Look up the fields linked to this initiative's form
-  const fields = database.prepare(`
-    SELECT f.field_id, f.field_key, f.field_label, f.field_type,
-           MIN(fq.display_order) AS display_order
-    FROM field f
-    JOIN form_questions fq ON fq.field_id = f.field_id
-    JOIN form fm ON fm.form_id = fq.form_id
-    WHERE fm.initiative_id = ?
-    GROUP BY f.field_id, f.field_key, f.field_label, f.field_type
-    ORDER BY display_order, f.field_id
-  `).all(initiativeId);
+  // Look up the questions linked to this initiative's forms
+  const fields = queryInitiativeQuestions(database, initiativeId);
 
   if (fields.length === 0) return [];
 
@@ -37,7 +63,7 @@ export function queryTableData(database, initiativeId) {
       label = `${label} (${f.field_id})`;
     }
     usedLabels.add(label);
-    return `MAX(CASE WHEN fq.field_id = ${f.field_id} THEN ${valCol} END) AS [${label}]`;
+    return `MAX(CASE WHEN fq.root_field_id = ${f.field_id} THEN ${valCol} END) AS [${label}]`;
   }).join(',\n    ');
 
   const sql = `
@@ -54,23 +80,16 @@ export function queryTableData(database, initiativeId) {
   return database.prepare(sql).all(initiativeId);
 }
 
-/** Returns initiative submission data restricted to explicitly selected questions. */
+/**
+ * Returns initiative submission data restricted to explicitly selected questions.
+ * fieldIds are root question ids; answers from every revision are included.
+ */
 export function querySelectedQuestionData(database, initiativeId, fieldIds) {
   if (!Array.isArray(fieldIds) || fieldIds.length === 0) {
     return { tableData: [], questions: [] };
   }
 
-  const placeholders = fieldIds.map(() => '?').join(', ');
-  const fields = database.prepare(`
-    SELECT f.field_id, f.field_key, f.field_label, f.field_type,
-           MIN(fq.display_order) AS display_order
-    FROM field f
-    JOIN form_questions fq ON fq.field_id = f.field_id
-    JOIN form fm ON fm.form_id = fq.form_id
-    WHERE fm.initiative_id = ? AND f.field_id IN (${placeholders})
-    GROUP BY f.field_id, f.field_key, f.field_label, f.field_type
-    ORDER BY display_order, f.field_id
-  `).all(initiativeId, ...fieldIds);
+  const fields = queryInitiativeQuestions(database, initiativeId, fieldIds);
 
   const usedLabels = new Set();
   const questions = fields.map((field) => {
@@ -83,7 +102,7 @@ export function querySelectedQuestionData(database, initiativeId, fieldIds) {
   if (questions.length === 0) return { tableData: [], questions };
   const pivotColumns = questions.map((field) => {
     const valueColumn = getPivotValueColumn(field.field_type);
-    return `MAX(CASE WHEN fq.field_id = ${field.field_id} THEN ${valueColumn} END) AS [${field.column}]`;
+    return `MAX(CASE WHEN fq.root_field_id = ${field.field_id} THEN ${valueColumn} END) AS [${field.column}]`;
   }).join(',\n    ');
 
   const tableData = database.prepare(`
