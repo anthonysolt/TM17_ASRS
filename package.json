@@ -11,47 +11,10 @@
     "db:migrate:question-classification": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260820_core_initiative_questions.sql",
     "db:migrate:form-questions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260820_form_questions.sql",
     "db:migrate:qr-counters": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260821_qr_aggregate_counters.sql",
-<<<<<<< Updated upstream
-    "db:migrate:form-versions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260923_form_versions.sql",
-    "db:migrate:shared-form-questions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_shared_form_questions.sql",
-    "db:migrate:report-published-at": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_report_published_at.sql",
-=======
-<<<<<<< HEAD
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "next": "16.1.6",
-    "nodemailer": "^8.0.1",
-    "openai": "^4.67.0",
-    "papaparse": "^5.5.3",
-    "pg": "^8.22.0",
-    "postgres": "^3.4.9",
-    "psql": "^0.0.1",
-    "qrcode": "^1.5.4",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "recharts": "^3.8.0"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@vitest/coverage-v8": "^3.2.4",
-    "better-sqlite3": "^13.0.3",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4",
-    "vitest": "^3.2.4"
-  }
-}
-=======
     "db:migrate:form-versions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20260923_form_versions.sql",
     "db:migrate:shared-form-questions": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_shared_form_questions.sql",
     "db:migrate:report-published-at": "set -a; [ ! -f .env.local ] || . ./.env.local; set +a; PSQL_BIN=\"$(which -a psql | grep -v '/node_modules/' | head -n 1)\"; \"$PSQL_BIN\" \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f database/migrations/20261008_report_published_at.sql",
     "db:migrate": "bash scripts/db-migrate.sh",
->>>>>>> Stashed changes
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
@@ -81,7 +44,3 @@
     "vitest": "^3.2.4"
   }
 }
-<<<<<<< Updated upstream
-=======
->>>>>>> cfc11d8 (db migration script)
->>>>>>> Stashed changes

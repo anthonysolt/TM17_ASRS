@@ -62,6 +62,11 @@ not_needed() {
   case "$1" in
     20260820_form_questions.sql)
       [ "$(psql_value "SELECT to_regclass('form_field') IS NULL")" = "t" ] ;;
+    20260923_form_versions.sql|20261007_question_lineage.sql)
+      # Both target the per-version form_questions layout that
+      # 20261008_shared_form_questions.sql replaces with form_version_questions.
+      # On the new layout they would re-add form_questions.form_version_id.
+      [ "$(psql_value "SELECT to_regclass('form_version_questions') IS NOT NULL")" = "t" ] ;;
     20261008_shared_form_questions.sql)
       [ "$(psql_value "SELECT NOT EXISTS (
           SELECT 1 FROM information_schema.columns

@@ -379,12 +379,13 @@ export default function ReportingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: reportId, status: newStatus }),
       });
+      const label = newStatus === 'completed' ? 'unpublished' : newStatus;
       if (res.ok) {
-        showToast(`Report ${newStatus} successfully`);
+        showToast(`Report ${label} successfully`);
         await loadMgmtData();
       } else {
         const data = await res.json();
-        showToast(data.error || `Failed to ${newStatus} report`, 'error');
+        showToast(data.error || `Failed to ${newStatus === 'completed' ? 'unpublish' : newStatus} report`, 'error');
       }
     } catch {
       showToast('Connection error. Please try again.', 'error');
