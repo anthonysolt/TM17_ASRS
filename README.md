@@ -1,180 +1,66 @@
-# Launching New Fixes
+# Instructions
 
-If you would like to test the new fixes, follow these steps:
-
-## 1. Download Git
-
-Open a terminal window and run:
-
-```bash
-sudo apt install git
-```
-
-Verify the installation by checking the version number:
-
-```bash
-git -v
-```
-
-## 2. Update TM17 Folder with New Code
-
-Open your TM17 folder, right-click, and select "Open in Terminal".
+- Launch Linux VM
+  - Install the ZIP folder of the 1.20 branch from the GitHub repo (Move zip to the desktop and extract it to the desktop)
+  - Open the `TM17_ASRS-TM17_1.20` folder on your desktop and open the nested `TM17_ASRS-TM17_1.20` folder
+  - Right-click in the folder and select "Open in Terminal"
 
 Run the following commands:
 
-```bash
-git init
-git remote add origin https://github.com/anthonysolt/TM17_ASRS.git
-git fetch origin
-git checkout -f TM171-1.10
-git reset --hard origin/TM17-1.10
-```
+- `npm install`
+- `npm audit fix --force`
+- `sudo -u postgres psql -c 'CREATE DATABASE "asrs_1.20" WITH TEMPLATE asrs OWNER asrs;'`
+- `vim .env.local`
+  - Hit the "I" key
+  - Left click and paste `DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs_1.20` into the `.env` file
+    - Type `:wq` to write and exit
+- `npm run db:schema`
+- `npm run db:migrate`
+- Go back to the TM17 folder and Open the `scripts` folder. Right-click and select "Open Terminal." In the new terminal window, run the command `./upgrade-legacy-data.sh`. Close the newly created terminal window and return to the original terminal window
+- `npm run dev`
+- Open http://localhost:3000/ in Firefox and have fun using the app!
 
-Finally, launch the application:
+> **Note:** Since there are significant changes in this 1.20 version, I thought it would be best to preserve the old 1.10 version and build the new 1.20 version from scratch just to be safe.
 
-```bash
-npm run dev
-```
+# New Features
 
-Notes:
-- When in the VM, the commands can be copied from this GitHub repository: https://github.com/anthonysolt/TM17_ASRS/tree/TM17-1.10 
-- If these steps fail, you can repeat the initial installation instructions with the zip file downloaded from the link above.
-- If you run into a connection error, ensure that you have a .env.local file with the correct DB link. 
+## Home Page (Before Login)
 
-# 1.10 Fixes
-- Fixed Title for Goal Metrics
-- Archiving error with Initiatives -- "Missing required field - name" 
-- Investigate only being able to view one report for the Initiatives tab on the Reports tab
-- Percentage Balancing for Goals and their weight
-- Rounding error on the percentage values
-- Rounding error on the percentage values
-- Create Goal Error catching -- throw error when all fields not filled out
-- Red Error Messages
-- Add Progress Bar for each independent goal 
-- Title for Metric for Goal scoring
-- QR Codes generated are not showing when created in the distribution tab
+- Added publicly viewable report pages for each initiative
+  - All public website viewers can view the published reports
+  - This page is dynamic and syncs with added and deleted initiatives
 
-# ASRS Setup Instructions
+## Initiatives:
 
-A comprehensive guide to setting up the ASRS project locally.
+- Replaced the "Category" column with the "Last Updated" column
 
-## Prerequisites
+## Reports:
 
-- Windows Host machine
-- Administrative access for VirtualBox and PostgreSQL installation
+- Changed UI layout for the page
+- Added option to archive old reports
+- File type button for downloads now highlights properly when selected
+- Management: Switched section title of "STATUS" to "STATUS FILTER"
+- Publish Dates for when a report is archived now update properly
+- Add back button to the "view report" page
 
-## Installation Steps
+## Surveys:
 
-### Step 1: Install VirtualBox
+- Surveys are now editable and use the same UI as the create survey page, in which a user can
+  - Change question titles
+  - Change answer fields
+  - Remove questions
+  - Add questions
+  - Change question order
+- Saved Initiative/Core Questions keep their original question title
+- Edited surveys maintain continuity for report generation and goal measuring
+- Display of Core Questions and Initiative Questions now includes their question type
+- Manage Surveys: QR codes can be directly generated when on the "QR Code" section of the manage page.
+- Distribution: Changed UI for QR Code generation (buttons are now highlighted when selected, and the link to the survey is displayed above the generated QR code).
 
-Download VirtualBox from the official website (select the Windows Host version):
+## Goals & Scoring:
 
-[https://www.virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads)
-
-### Step 2: Download Ubuntu ISO Image
-
-Download the Ubuntu ISO image:
-
-[https://releases.ubuntu.com/noble/](https://releases.ubuntu.com/noble/)
-
-### Step 3: Download TM17 Code
-
-Clone or download the TM17 ASRS repository:
-
-[https://github.com/anthonysolt/TM17_ASRS](https://github.com/anthonysolt/TM17_ASRS)
-
-### Step 4: Install PostgreSQL
-
-Update your system packages:
-
-```bash
-sudo apt update
-sudo apt install -y postgresql-common
-sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
-sudo apt update
-sudo apt install -y postgresql-18 postgresql-client-18
-sudo systemctl start postgresql
-```
-
-**Configure Environment Variables:**
-
-Edit the `.env.local` file and add:
-
-```
-DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs
-```
-
-### Step 5: Initialize Database
-
-Connect to PostgreSQL and set up the database:
-
-```bash
-sudo -u postgres psql
-```
-
-Then execute the following SQL commands:
-
-```sql
-CREATE USER asrs WITH PASSWORD 'change-me';
-CREATE DATABASE asrs;
-GRANT ALL PRIVILEGES ON DATABASE asrs TO asrs;
-\c asrs
-GRANT ALL ON SCHEMA public TO asrs;
-\q
-```
-
-Restore the database from backup:
-
-```bash
-sudo -u postgres psql -h localhost -U asrs -d asrs < asrs_db.sql
-```
-
-### Step 6: Install Node.js and npm
-
-Update system and install Node Version Manager (nvm):
-
-```bash
-sudo apt update
-sudo apt install curl
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.7/install.sh | bash
-```
-
-Install Node.js and npm:
-
-```bash
-nvm install node 26
-npm install -g npm@12.0.2
-```
-
-### Step 7: Run the Application
-
-Install dependencies and start the development server:
-
-```bash
-npm install
-npm audit fix --force
-npm run dev
-```
-
-## Troubleshooting
-
-### Turbopack Error
-
-If you encounter a turbopack error, clear the cache and reinstall:
-
-```bash
-rm -rf .next node_modules && npm install
-```
-
-## Support
-
-For issues or questions, please open an issue on the [GitHub repository](https://github.com/anthonysolt/TM17_ASRS).
-
-```bash
-npm run dev    # development server
-npm run db:setup # initialize a new, empty database
-npm run build  # production build
-npm run start  # serve a production build
-npm test       # test suite
-npm run lint   # lint source files
-```
+- Goals can now be attached to questions. The goal's current value comes from the survey responses and the selected analysis method.
+- Current values can not be set to negative with the increment/decrement buttons
+- Added and deleted goals now proportionally affect the weights of the remaining goals for each initiative
+- Added progress bar for threshold goals
+- Removed "Target Metric Field"
