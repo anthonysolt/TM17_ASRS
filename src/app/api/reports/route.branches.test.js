@@ -75,7 +75,7 @@ describe('/api/reports branch coverage', () => {
     validateReportCreatePayloadMock.mockReturnValueOnce({ valid: false, error: 'bad' });
     expect((await POST(req({}))).status).toBe(400);
 
-    validateReportCreatePayloadMock.mockReturnValue({ valid: true, value: { initiativeId: 2, name: 'R1', questionSelections: [{ id: 5, method: 'delta_halves' }] } });
+    validateReportCreatePayloadMock.mockReturnValue({ valid: true, value: { initiativeId: 2, name: 'R1', questionSelections: [{ id: 5, method: 'delta_halves' }], goalIds: [] } });
     requirePermissionMock.mockReturnValueOnce({ error: new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }) });
     expect((await POST(req({ initiativeId: 2 }))).status).toBe(403);
 
@@ -106,6 +106,40 @@ describe('/api/reports branch coverage', () => {
     reportEngineMock.processReportData.mockReturnValue({ filteredData: [], metrics: {}, explainability: {} });
     reportEngineMock.computeTrendData.mockReturnValue([]);
     expect((await POST(req({ initiativeId: 2, name: 'R1' }))).status).toBe(200);
+
+    // A goal id that is not one of the initiative's goals is rejected.
+    const goalPayload = { valid: true, value: { initiativeId: 2, name: 'R1', questionSelections: [{ id: 5, method: 'delta_halves' }], goalIds: [42] } };
+    validateReportCreatePayloadMock.mockReturnValueOnce(goalPayload);
+    const goalsRes = await POST(req({ initiativeId: 2 }));
+    expect(goalsRes.status).toBe(400);
+    expect((await goalsRes.json()).error).toContain('goals');
+
+    // A selected goal is stored, scored, in the report snapshot.
+    const baseImpl = prepareMock.getMockImplementation();
+    const insertReportRun = vi.fn(() => ({ lastInsertRowid: 8 }));
+    prepareMock.mockImplementation((sql) => {
+      const query = String(sql || '');
+      if (query.includes('FROM initiative_goal')) {
+        return { all: () => [{ goal_id: 42, goal_name: 'Reach 100', description: '', target_value: 100, current_value: 50, weight: 100, scoring_method: 'linear', deadline: null, source_root_field_id: null, source_method: null }] };
+      }
+      if (query.includes('INSERT INTO reports')) return { run: insertReportRun };
+      return baseImpl(sql);
+    });
+    validateReportCreatePayloadMock.mockReturnValueOnce(goalPayload);
+    expect((await POST(req({ initiativeId: 2 }))).status).toBe(200);
+    const [, , , insertedStatus, , reportData, , publishedAt] = insertReportRun.mock.calls[0];
+    expect(insertedStatus).toBe('completed');
+    expect(publishedAt).toBeNull();
+    const snapshot = JSON.parse(reportData);
+    expect(snapshot.config.goalIds).toEqual([42]);
+    expect(snapshot.results.goals).toEqual([expect.objectContaining({ goal_id: 42, goal_name: 'Reach 100', score: 50 })]);
+    // A report generated as published gets its publish date at creation.
+    validateReportCreatePayloadMock.mockReturnValueOnce({ valid: true, value: { ...goalPayload.value, status: 'published' } });
+    expect((await POST(req({ initiativeId: 2 }))).status).toBe(200);
+    const publishedInsert = insertReportRun.mock.calls[1];
+    expect(publishedInsert[3]).toBe('published');
+    expect(publishedInsert[7]).toBe(publishedInsert[6]);
+    prepareMock.mockImplementation(baseImpl);
 
     reportEngineMock.processReportData.mockImplementationOnce(() => { throw new Error('boom'); });
     expect((await POST(req({ initiativeId: 2, name: 'R1' }))).status).toBe(500);

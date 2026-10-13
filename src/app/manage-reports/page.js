@@ -178,8 +178,8 @@ export default function ManageReportsPage() {
   function getStatusPillClass(status) {
     if (status === 'published') return 'pill-green';
     if (status === 'completed') return 'pill-yellow';
-    if (status === 'generating' || status === 'draft') return 'pill-yellow';
-    if (status === 'failed' || status === 'archived') return 'pill-gray';
+    if (status === 'draft') return 'pill-yellow';
+    if (status === 'archived') return 'pill-gray';
     return 'pill-gray';
   }
 
@@ -423,7 +423,7 @@ export default function ManageReportsPage() {
                       ...(
                         r.status === 'published'
                           ? { backgroundColor: '#D1FAE5', color: '#065F46' }
-                          : (r.status === 'completed' || r.status === 'generating' || r.status === 'draft')
+                          : (r.status === 'completed' || r.status === 'draft')
                           ? { backgroundColor: '#FEF3C7', color: '#92400E' }
                           : { backgroundColor: '#E5E7EB', color: '#374151' }
                       ),
@@ -616,8 +616,6 @@ export default function ManageReportsPage() {
                 }}
               >
                 <option value="completed">Unpublished</option>
-                <option value="generating">Generating</option>
-                <option value="failed">Failed</option>
               </select>
             </div>
 

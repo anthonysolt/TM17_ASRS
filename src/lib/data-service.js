@@ -37,6 +37,17 @@ export async function getReportQuestions(initiativeId) {
 }
 
 /**
+ * getReportGoals(initiativeId)
+ * Returns the initiative's goals, scored, for selection on a report.
+ */
+export async function getReportGoals(initiativeId) {
+  const response = await fetch(`/api/initiatives/${initiativeId}/report-goals`);
+  if (!response.ok) return [];
+  const data = await response.json();
+  return Array.isArray(data.goals) ? data.goals : [];
+}
+
+/**
  * getTrendData(initiativeId)
  * Returns the trend analysis data for one specific initiative.
  * Only returns trends where enabledDisplay is true.

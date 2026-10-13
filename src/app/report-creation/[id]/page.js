@@ -61,6 +61,7 @@ export default function ReportViewPage() {
             chartData: results.chartData,
             tableData: results.filteredTableData,
             explainability: results.explainability,
+            goals: results.goals,
           };
           setReportData(shaped);
           setTrendData(results.trendData || []);

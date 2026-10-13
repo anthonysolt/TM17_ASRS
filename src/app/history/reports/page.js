@@ -5,6 +5,7 @@ import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
 import ReportDashboard from '@/components/ReportDashboard';
 import { normalizeSnapshot } from '@/lib/report-snapshot';
+import { buildGoalsCsvLines } from '@/lib/goals/goal-display';
 import { apiFetch } from '@/lib/api/client';
 import { buildReportFileName } from '@/lib/download-filename';
 
@@ -120,21 +121,30 @@ export default function HistoricalReportsPage() {
 
     const normalized = normalizeSnapshot(parsed);
     const rows = normalized?.results?.filteredTableData || [];
-    if (rows.length === 0) {
+    const goals = normalized?.results?.goals || [];
+    if (rows.length === 0 && goals.length === 0) {
       alert('No table data available to export.');
       return;
     }
 
-    const columns = Object.keys(rows[0]);
-    const csvLines = [
-      columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
-      ...rows.map((row) =>
-        columns.map((c) => {
-          const val = row[c] == null ? '' : String(row[c]);
-          return `"${val.replace(/"/g, '""')}"`;
-        }).join(',')
-      ),
-    ];
+    const csvLines = [];
+    if (rows.length > 0) {
+      const columns = Object.keys(rows[0]);
+      csvLines.push(
+        columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
+        ...rows.map((row) =>
+          columns.map((c) => {
+            const val = row[c] == null ? '' : String(row[c]);
+            return `"${val.replace(/"/g, '""')}"`;
+          }).join(',')
+        ),
+      );
+    }
+    // Goals included on the report follow the data table as their own section.
+    if (goals.length > 0) {
+      if (csvLines.length > 0) csvLines.push('');
+      csvLines.push(...buildGoalsCsvLines(goals));
+    }
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -185,6 +195,7 @@ export default function HistoricalReportsPage() {
         chartData: results.chartData,
         tableData: results.filteredTableData,
         explainability: results.explainability,
+        goals: results.goals,
       },
       trendData: results.trendData || [],
       initiative: {

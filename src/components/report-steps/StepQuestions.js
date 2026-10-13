@@ -24,9 +24,12 @@ export default function StepQuestions({ reportConfig, onChange, questions, loadi
 
   return (
     <div>
-      <h2 style={{ fontSize: '1.15rem', fontWeight: 600, marginBottom: '1rem' }}>
+      <h2 style={{ fontSize: '1.15rem', fontWeight: 600, marginBottom: '0.5rem' }}>
         Select Survey Questions for Analysis
       </h2>
+      <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+        Optional. Skip this step to build a report from goals only.
+      </p>
 
       {loading ? (
         <p style={{ color: '#6B7280' }}>Loading survey questions...</p>

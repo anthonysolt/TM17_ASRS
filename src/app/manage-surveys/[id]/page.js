@@ -5,6 +5,7 @@ import { Fragment, useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
+import QrFormatButtons from '@/components/QrFormatButtons';
 
 function formatDate(d) {
   if (!d) return '\u2014';
@@ -38,6 +39,7 @@ export default function SurveyDetailPage({ params }) {
   const [success, setSuccess] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
   const [qrGenerating, setQrGenerating] = useState(false);
+  const [selectedQrFormat, setSelectedQrFormat] = useState(null);
   const [newQrCode, setNewQrCode] = useState(null);
 
   // Expanded submission
@@ -134,6 +136,7 @@ export default function SurveyDetailPage({ params }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate QR code');
       setNewQrCode(data.qrCode);
+      setSelectedQrFormat(null);
       setSuccess('QR code generated successfully.');
 
       const qrRes = await apiFetch('/api/qr-codes?scope=survey');
@@ -458,18 +461,13 @@ export default function SurveyDetailPage({ params }) {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '4px' }}>Survey Link:</div>
                 <div style={{ fontSize: '12px', color: '#6B7280', wordBreak: 'break-all', marginBottom: '8px' }}>{newQrCode.targetUrl}</div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {['png', 'svg'].map(format => (
-                    <button
-                      key={format}
-                      className="btn-outline"
-                      style={{ padding: '6px 14px', fontSize: '13px' }}
-                      onClick={() => window.open(`/api/qr-codes/download?qrCodeKey=${newQrCode.qrCodeKey}&format=${format}&download=true`, '_blank')}
-                    >
-                      {format.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
+                <QrFormatButtons
+                  selectedFormat={selectedQrFormat}
+                  onSelect={(format) => {
+                    setSelectedQrFormat(format);
+                    window.open(`/api/qr-codes/download?qrCodeKey=${newQrCode.qrCodeKey}&format=${format}&download=true`, '_blank');
+                  }}
+                />
               </div>
             </div>
           )}

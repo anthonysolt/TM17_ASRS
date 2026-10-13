@@ -9,6 +9,7 @@
  * - Chart display (pie, bar, line)
  * - Data table
  * - Trend display
+ * - Goals selected when the report was generated
  *
  * Props:
  * - reportData: Object — The full report data from dataService
@@ -25,6 +26,7 @@ import SortPanel from './SortPanel';
 import ChartDisplay from './ChartDisplay';
 import DataTable from './DataTable';
 import TrendDisplay from './TrendDisplay';
+import GoalsTable from './GoalsTable';
 // import AIInsightsPanel from './AIInsightsPanel';
 import { getSortedReportData } from '@/lib/data-service';
 import { buildFilteredChartData, filterReportRows, getReportFilterColumns } from '@/lib/report-view-filters';
@@ -276,6 +278,10 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
           </p>
         </div>
       </div>
+
+      {/* ---- GOALS ---- */}
+      {/* Goals chosen in the report builder, scored as of generation */}
+      <GoalsTable goals={reportData.goals} />
 
       {/* ---- VIEW TOGGLE ROW ---- */}
       {/* Stacks vertically on mobile via .view-toggle-bar */}

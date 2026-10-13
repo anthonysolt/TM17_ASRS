@@ -52,6 +52,7 @@ export function toReportingViewModel(report) {
       chartData: results.chartData,
       tableData: Array.isArray(results.filteredTableData) ? results.filteredTableData : [],
       explainability: results.explainability,
+      goals: Array.isArray(results.goals) ? results.goals : [],
     },
     trendData: Array.isArray(results.trendData) ? results.trendData : [],
   };

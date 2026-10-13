@@ -6,7 +6,14 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import { getScoreColor } from '@/lib/score-utils';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
-import { ANALYSIS_METHODS, getAnalysisMethodLabel } from '@/lib/analysis-methods';
+import { ANALYSIS_METHODS } from '@/lib/analysis-methods';
+import {
+  formatPercentage,
+  getGoalAccentColor,
+  getGoalProgress,
+  isUnmetWeightedGoal,
+} from '@/lib/goals/goal-display';
+import { GoalRow, GoalStatusBadge } from '@/components/GoalsTable';
 
 /** Keep user-entered goal weights within the supported percentage range. */
 function clampWeight(value) {
@@ -22,26 +29,6 @@ function clampCurrentValue(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return value;
   return String(Math.max(0, numericValue));
-}
-
-/** Calculate raw progress toward a goal independently of its scoring method. */
-function getGoalProgress(goal) {
-  const currentValue = Number(goal.current_value);
-  const targetValue = Number(goal.target_value);
-
-  if (!Number.isFinite(currentValue) || !Number.isFinite(targetValue) || targetValue <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, (currentValue / targetValue) * 100);
-}
-
-/** Display percentages with no more than two decimal places. */
-function formatPercentage(value) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return '0';
-
-  return numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 /**
@@ -350,39 +337,6 @@ export default function GoalsPage() {
       case 'binary': return 'Binary (any progress = 100%)';
       default: return method;
     }
-  }
-
-  /** Build a status badge, including value-aware threshold goal states. */
-  function getStatusBadge(goal) {
-    if (goal.scoring_method === 'threshold') {
-      const currentValue = Number(goal.current_value);
-      const targetValue = Number(goal.target_value);
-
-      if (currentValue < targetValue) {
-        return <span className="pill pill-yellow">Not Met</span>;
-      }
-      if (currentValue === targetValue) {
-        return <span className="pill pill-green">Reached</span>;
-      }
-      return <span className="pill pill-green">Exceeded</span>;
-    }
-
-    if (goal.score >= 100) {
-      return <span className="pill pill-blue">Exceeded</span>;
-    } else if (goal.score >= 70) {
-      return <span className="pill pill-green">On Track</span>;
-    } else {
-      return <span className="pill pill-yellow">Not Met</span>;
-    }
-  }
-
-  /** Linear and threshold goals remain visually highlighted until fully met. */
-  function isUnmetWeightedGoal(goal) {
-    return ['linear', 'threshold'].includes(goal.scoring_method) && Number(goal.score) < 100;
-  }
-
-  function getGoalTabColor(goal) {
-    return isUnmetWeightedGoal(goal) ? '#F59E0B' : getScoreColor(goal.score);
   }
 
   /** Render the compact progress indicator used by target metric cards. */
@@ -791,74 +745,9 @@ export default function GoalsPage() {
                         </div>
                       </td>
                     </tr>
-                  ) : (() => {
-                    const progress = getGoalProgress(goal);
-
-                    return (
+                  ) : (
                     /* ---- Display Mode Row ---- */
-                    <tr
-                      key={goal.goal_id}
-                      className="goal-list-row"
-                      style={{ '--goal-accent': getGoalTabColor(goal) }}
-                    >
-                      <td>
-                        <div style={{ fontWeight: 500, color: 'var(--color-text-primary)', marginBottom: 2 }}>
-                          {goal.goal_name}
-                        </div>
-                        {goal.description && (
-                          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                            {goal.description}
-                          </div>
-                        )}
-                        {goal.source_root_field_id && (
-                          <div
-                            title={goal.source?.description || ''}
-                            style={{ fontSize: 11, color: '#2563EB', marginTop: 4 }}
-                          >
-                            Sourced from: {goal.source?.questionLabel || 'Survey question'} · {getAnalysisMethodLabel(goal.source_method)}
-                            {goal.source && goal.source.value === null && (
-                              <span style={{ color: 'var(--color-text-light)' }}> (not enough data yet)</span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{formatPercentage(goal.weight)}%</span>
-                          <div style={{ width: 80, height: 4, backgroundColor: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
-                            <div
-                              style={{
-                                width: `${Math.min(goal.weight, 100)}%`,
-                                height: '100%',
-                                backgroundColor: 'var(--color-asrs-orange)',
-                                borderRadius: 2,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ fontWeight: 500 }}>{goal.target_value}</td>
-                      <td>
-                        <span style={{ fontWeight: 500, color: getScoreColor(goal.score) }}>
-                          {goal.current_value}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ fontWeight: 600, fontSize: 13 }}>{formatPercentage(progress)}%</span>
-                          <div style={{ width: 80, height: 4, backgroundColor: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
-                            <div
-                              style={{
-                                width: `${Math.min(progress, 100)}%`,
-                                height: '100%',
-                                backgroundColor: getScoreColor(progress),
-                                borderRadius: 2,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-                      <td>{getStatusBadge(goal)}</td>
+                    <GoalRow key={goal.goal_id} goal={goal}>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <button
@@ -887,9 +776,8 @@ export default function GoalsPage() {
                           </button>
                         </div>
                       </td>
-                    </tr>
-                    );
-                  })()
+                    </GoalRow>
+                  )
                 )}
               </tbody>
             </table>
@@ -911,7 +799,7 @@ export default function GoalsPage() {
                 <div
                   key={goal.goal_id}
                   style={{
-                    border: `1px solid ${getGoalTabColor(goal)}`,
+                    border: `1px solid ${getGoalAccentColor(goal)}`,
                     borderRadius: 12,
                     padding: 20,
                     display: 'flex',
@@ -922,7 +810,7 @@ export default function GoalsPage() {
                     transition: 'border-color 150ms ease',
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-border-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = getGoalTabColor(goal); }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = getGoalAccentColor(goal); }}
                 >
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', textAlign: 'center', marginBottom: 4 }}>
                     {goal.goal_name}
@@ -978,7 +866,7 @@ export default function GoalsPage() {
                   )}
 
                   <div style={{ marginTop: 4 }}>
-                    {getStatusBadge(goal)}
+                    <GoalStatusBadge goal={goal} />
                   </div>
                 </div>
               ))}

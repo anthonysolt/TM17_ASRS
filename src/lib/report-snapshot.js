@@ -50,6 +50,7 @@ export function normalizeSnapshot(rawSnapshot) {
             ? Number(trend.confidenceScore)
             : 50,
         })),
+        goals: ensureArray(results.goals),
         explainability: ensureExplainability(results.explainability || {
           inputRowCount: ensureArray(results.filteredTableData).length,
           afterFilterCount: ensureArray(results.filteredTableData).length,
@@ -78,6 +79,7 @@ export function normalizeSnapshot(rawSnapshot) {
       ...results,
       filteredTableData: ensureArray(results.filteredTableData),
       trendData: ensureArray(results.trendData),
+      goals: ensureArray(results.goals),
       explainability: ensureExplainability(results.explainability),
     },
     generatedAt: rawSnapshot.generatedAt || null,
@@ -110,6 +112,7 @@ export function parseReportForDashboard(report) {
       chartData: results.chartData,
       tableData: results.filteredTableData,
       explainability: results.explainability,
+      goals: results.goals,
     },
     trendData: results.trendData || [],
     aiInsights: results.aiInsights || null,

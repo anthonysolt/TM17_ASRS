@@ -10,6 +10,7 @@ import { normalizeSnapshot, parseReportForDashboard } from '@/lib/report-snapsho
 import { apiFetch } from '@/lib/api/client';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { buildReportFileName } from '@/lib/download-filename';
+import { buildGoalsCsvLines, buildGoalsHtmlTable, buildGoalsTsvLines } from '@/lib/goals/goal-display';
 
 const PDF_DISPLAY_OPTIONS = [
   { value: 'charts', label: 'Charts only' },
@@ -285,6 +286,7 @@ export default function ReportingPage() {
         chartData: results.chartData,
         tableData: results.filteredTableData,
         explainability: results.explainability,
+        goals: results.goals,
       });
       setTrendData(results.trendData || []);
       setAiInsights(results.aiInsights || null);
@@ -367,8 +369,6 @@ export default function ReportingPage() {
     if (s === 'published') return { bg: '#D1FAE5', color: '#065F46', label: 'Published' };
     if (s === 'archived') return { bg: '#F3F4F6', color: '#6B7280', label: 'Archived' };
     if (s === 'completed') return { bg: '#FEF3C7', color: '#92400E', label: 'Unpublished' };
-    if (s === 'generating') return { bg: '#FEF3C7', color: '#92400E', label: 'Generating' };
-    if (s === 'failed') return { bg: '#FEE2E2', color: '#991B1B', label: 'Failed' };
     return { bg: '#FEF3C7', color: '#92400E', label: 'Draft' };
   }
 
@@ -496,23 +496,35 @@ export default function ReportingPage() {
     setSearchQuery('');
   }
 
+  // CSV of the data table, followed by a "Goals" section when the report has goals.
+  function buildCsvLines(rows, goals) {
+    const lines = [];
+    if (rows.length > 0) {
+      const columns = Object.keys(rows[0]);
+      lines.push(
+        columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
+        ...rows.map((row) =>
+          columns.map((c) => {
+            const val = row[c] == null ? '' : String(row[c]);
+            return `"${val.replace(/"/g, '""')}"`;
+          }).join(',')
+        ),
+      );
+    }
+    if (goals.length > 0) {
+      if (lines.length > 0) lines.push('');
+      lines.push(...buildGoalsCsvLines(goals));
+    }
+    return lines;
+  }
+
   function downloadCsv(report) {
     const { reportData: rd } = parseReportForDashboard(report);
-    const rows = rd?.tableData || [];
-    if (rows.length === 0) {
+    const csvLines = buildCsvLines(rd?.tableData || [], rd?.goals || []);
+    if (csvLines.length === 0) {
       alert('No table data available to export.');
       return;
     }
-    const columns = Object.keys(rows[0]);
-    const csvLines = [
-      columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
-      ...rows.map((row) =>
-        columns.map((c) => {
-          const val = row[c] == null ? '' : String(row[c]);
-          return `"${val.replace(/"/g, '""')}"`;
-        }).join(',')
-      ),
-    ];
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -851,6 +863,7 @@ export default function ReportingPage() {
       'th,td{border:1px solid #d1d5db;padding:0.4rem 0.5rem;text-align:left;vertical-align:top;white-space:nowrap}',
       'th{background:#f3f4f6;font-weight:700;white-space:nowrap}',
       'tr{break-inside:avoid}',
+      '.goals-table td{white-space:normal}',
       '@media print{.page-header{break-inside:avoid}}',
     ].join('\n');
 
@@ -864,6 +877,10 @@ export default function ReportingPage() {
 
     const explainabilityHtml = reportData?.explainability
       ? `<section class="card"><h2>Explainability</h2><p>${escapeHtml(reportData.explainability)}</p></section>`
+      : '';
+
+    const goalsHtml = reportData?.goals?.length
+      ? `<section class="card"><h2>Goals</h2><div class="table-wrap">${buildGoalsHtmlTable(reportData.goals)}</div></section>`
       : '';
 
     return [
@@ -880,6 +897,7 @@ export default function ReportingPage() {
       `<div class="meta-item"><span>Initiative</span><strong>${escapeHtml(reportData?.initiativeName || selectedInitiative?.name || 'N/A')}</strong></div>`,
       '</div></header>',
       `<section class="card"><h2>Summary</h2>${summaryHtml}</section>`,
+      goalsHtml,
       explainabilityHtml,
       `<section class="content ${contentClass}">`,
       showCharts ? buildChartsHtml() : '',
@@ -903,19 +921,10 @@ export default function ReportingPage() {
     setSelectedDownloadFormat(format);
     const currentReport = allReports.find((r) => String(r.id) === String(reportDbId));
     const fileName = buildReportFileName(currentReport?.name || `${selectedInitiative.name} Report`);
+    const goals = reportData.goals || [];
     if (format === 'csv') {
-      const rows = reportData.tableData || [];
-      if (rows.length === 0) return;
-      const columns = Object.keys(rows[0]);
-      const csvLines = [
-        columns.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','),
-        ...rows.map((row) =>
-          columns.map((c) => {
-            const val = row[c] == null ? '' : String(row[c]);
-            return `"${val.replace(/"/g, '""')}"`;
-          }).join(',')
-        ),
-      ];
+      const csvLines = buildCsvLines(reportData.tableData || [], goals);
+      if (csvLines.length === 0) return;
       const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -940,6 +949,8 @@ export default function ReportingPage() {
         `<div class="summary-card"><p class="label">Average Rating</p><p class="value">${escapeHtml(reportData.summary?.averageRating)}/5</p></div>`,
         `<div class="summary-card"><p class="label">Completion Rate</p><p class="value">${escapeHtml(reportData.summary?.completionRate)}%</p></div>`,
         '</div>',
+        goals.length > 0 ? `<h2>Goals</h2>${buildGoalsHtmlTable(goals)}` : '',
+        '</body></html>',
       ].join('\n');
       const blob = new Blob([htmlContent], { type: 'text/html' });
       const link = document.createElement('a');
@@ -951,9 +962,12 @@ export default function ReportingPage() {
       openPdfPrintWindow(buildPdfHtml(fileName));
     }
     if (format === 'xlsx') {
-      const worksheet = Object.entries(reportData)
-        .map(([key, value]) => `${key}\t${value}`)
-        .join('\n');
+      const worksheet = [
+        ...Object.entries(reportData)
+          .filter(([key]) => key !== 'goals')
+          .map(([key, value]) => `${key}\t${value}`),
+        ...(goals.length > 0 ? ['', ...buildGoalsTsvLines(goals)] : []),
+      ].join('\n');
       const blob = new Blob([worksheet], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       });
@@ -1637,8 +1651,6 @@ export default function ReportingPage() {
                 <option value="completed">Unpublished</option>
                 <option value="published">Published</option>
                 <option value="archived">Archived</option>
-                <option value="generating">Generating</option>
-                <option value="failed">Failed</option>
               </select>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>

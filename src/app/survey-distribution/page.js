@@ -4,6 +4,7 @@ import PageLayout from '@/components/PageLayout';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
+import QrFormatButtons from '@/components/QrFormatButtons';
 
 export default function SurveyDistributionPage() {
   const router = useRouter();
@@ -686,24 +687,10 @@ export default function SurveyDistributionPage() {
                 </div>
 
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>QR Code Downloads</div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className={selectedQrFormat === 'png' ? 'btn-primary' : 'btn-outline'}
-                    aria-pressed={selectedQrFormat === 'png'}
-                    onClick={() => { setSelectedQrFormat('png'); handleDownloadQR(qrResult.qrCodeKey, 'png'); }}
-                    style={{ padding: '6px 14px', fontSize: '13px' }}
-                  >
-                    PNG
-                  </button>
-                  <button
-                    className={selectedQrFormat === 'svg' ? 'btn-primary' : 'btn-outline'}
-                    aria-pressed={selectedQrFormat === 'svg'}
-                    onClick={() => { setSelectedQrFormat('svg'); handleDownloadQR(qrResult.qrCodeKey, 'svg'); }}
-                    style={{ padding: '6px 14px', fontSize: '13px' }}
-                  >
-                    SVG
-                  </button>
-                </div>
+                <QrFormatButtons
+                  selectedFormat={selectedQrFormat}
+                  onSelect={(format) => { setSelectedQrFormat(format); handleDownloadQR(qrResult.qrCodeKey, format); }}
+                />
               </>
             ) : (
               <div style={{

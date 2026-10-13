@@ -8,6 +8,12 @@ function safeParseJson(value, fallback) {
   }
 }
 
+// Only initiatives with settings.isPublic set to true appear on the public
+// reporting pages. No saved value means private, as in the initiative forms.
+export function isInitiativePublic(settings) {
+  return safeParseJson(settings, {})?.isPublic === true;
+}
+
 export function toInitiativeDto(row) {
   if (!row) return null;
 

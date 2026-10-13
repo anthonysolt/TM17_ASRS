@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import DataTable from '@/components/DataTable';
+import GoalsTable from '@/components/GoalsTable';
+import { getReportStatusLabel } from '@/lib/report-status';
 import { computeTrendData, processReportData, validateTrendConfig } from '@/lib/report-engine';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -10,7 +12,7 @@ import {
 
 const COLORS = ['#C0392B', '#E67E22', '#F39C12', '#27AE60', '#2980B9'];
 
-export default function StepPreview({ reportConfig, tableData, onGenerate, isSubmitting }) {
+export default function StepPreview({ reportConfig, tableData, selectedGoals = [], onGenerate, isSubmitting }) {
   const selectedInitiativeId = reportConfig.selectedInitiative?.id;
   const questionSelections = useMemo(
     () => reportConfig.questionSelections || [],
@@ -142,6 +144,18 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
               {questionSelections.map((selection) => selection.label).join(', ') || '—'}
             </p>
           </div>
+          <div>
+            <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Status After Generating</span>
+            <p style={{ margin: '0.15rem 0 0 0', fontWeight: '500' }}>
+              {getReportStatusLabel(reportConfig.status)}
+            </p>
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Goals</span>
+            <p style={{ margin: '0.15rem 0 0 0' }}>
+              {selectedGoals.map((goal) => goal.goal_name).join(', ') || '—'}
+            </p>
+          </div>
           {activeFilterEntries.length > 0 && (
             <div style={{ gridColumn: '1 / -1' }}>
               <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Filters</span>
@@ -170,6 +184,13 @@ export default function StepPreview({ reportConfig, tableData, onGenerate, isSub
           )}
         </div>
       </div>
+
+      {/* Goals — shown in both views */}
+      {selectedGoals.length > 0 && (
+        <div style={{ marginBottom: '1.25rem' }}>
+          <GoalsTable goals={selectedGoals} />
+        </div>
+      )}
 
       {/* ===== TABLE VIEW ===== */}
       {viewMode === 'table' && (

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { querySelectedQuestionData } from '@/lib/query-helpers';
+import { queryReportGoals } from '@/lib/goals/report-goals';
 import {
   validateReportCreatePayload,
   validateReportDeleteParams,
@@ -146,6 +147,15 @@ export async function POST(request) {
     }
     const tableData = selectedQuestionData.tableData;
     const attributes = selectedQuestionData.questions.map((question) => question.column);
+
+    // Goals are stored as scored when the report is generated.
+    const goals = queryReportGoals(db, initiativeId, payload.goalIds);
+    if (goals.length !== payload.goalIds.length) {
+      return NextResponse.json(
+        { error: 'One or more selected goals do not belong to this initiative' },
+        { status: 400 }
+      );
+    }
 
     // Compute summary from real submission data
     const submissionCount = db.prepare(
@@ -332,6 +342,7 @@ export async function POST(request) {
         expressions,
         sorts,
         questionSelections: questionAnalyses.map(({ trendConfig: _trendConfig, ...analysis }) => analysis),
+        goalIds: payload.goalIds,
       },
       results: {
         metrics,
@@ -339,6 +350,7 @@ export async function POST(request) {
         filteredTableData: filteredData,
         chartData,
         trendData,
+        goals,
         summary,
         aiInsights,
         reportId: `RPT-db-${initiativeId}`,
@@ -349,16 +361,18 @@ export async function POST(request) {
     };
 
     const result = db.prepare(
-      `INSERT INTO reports (initiative_id, name, description, status, created_by, report_data, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO reports (initiative_id, name, description, status, created_by, report_data, created_at, published_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       initiativeId,
       payload.name || '',
       payload.description || '',
-      'completed',
+      payload.status || 'completed',
       payload.createdBy || '',
       JSON.stringify(snapshot),
-      clock.nowIso()
+      clock.nowIso(),
+      // A report generated as published is stamped like one published later.
+      payload.status === 'published' ? clock.nowIso() : null
     );
 
     if (generationLogId) {
@@ -447,8 +461,8 @@ export async function PUT(request) {
     if (status !== undefined) {
       updates.push('status = ?');
       params.push(status);
-      // Moving into 'published' (e.g. from archived) restamps the publish date.
-      if (status === 'published' && existing.status !== 'published') {
+      // Every publish refreshes the publish date, whatever the previous status.
+      if (status === 'published') {
         updates.push('published_at = ?');
         params.push(new Date().toISOString());
       }

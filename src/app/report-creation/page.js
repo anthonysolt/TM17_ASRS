@@ -3,17 +3,19 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
-import { getInitiatives, getReportData, getReportQuestions } from '@/lib/data-service';
+import { getInitiatives, getReportData, getReportGoals, getReportQuestions } from '@/lib/data-service';
 
 import StepIndicator from '@/components/report-steps/StepIndicator';
 import StepConfig from '@/components/report-steps/StepConfig';
 import StepQuestions from '@/components/report-steps/StepQuestions';
+import StepGoals from '@/components/report-steps/StepGoals';
+import { getReportStatusLabel } from '@/lib/report-status';
 import StepPreview from '@/components/report-steps/StepPreview';
 import { getUiEventBus } from '@/lib/events/ui-event-bus';
 import EVENTS from '@/lib/events/event-types';
 import { apiFetch } from '@/lib/api/client';
 
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 4;
 
 export default function ReportCreationPage() {
   const [userRole, setUserRole] = useState('public');
@@ -24,6 +26,8 @@ export default function ReportCreationPage() {
   const [tableData, setTableData] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [goals, setGoals] = useState([]);
+  const [loadingGoals, setLoadingGoals] = useState(false);
 
   // ---- REPORT CONFIG ----
   const [currentStep, setCurrentStep] = useState(0);
@@ -32,6 +36,8 @@ export default function ReportCreationPage() {
     reportName: '',
     description: '',
     questionSelections: [],
+    goalIds: [],
+    status: 'completed',
     startDate: '',
     endDate: '',
   });
@@ -120,6 +126,30 @@ export default function ReportCreationPage() {
     loadQuestions();
   }, [reportConfig.selectedInitiative]);
 
+  // Only goals of the selected initiative can be included on its report.
+  useEffect(() => {
+    async function loadGoals() {
+      const initiativeId = reportConfig.selectedInitiative?.id;
+      if (!initiativeId) {
+        setGoals([]);
+        return;
+      }
+      setLoadingGoals(true);
+      try {
+        const nextGoals = await getReportGoals(initiativeId);
+        setGoals(nextGoals);
+        const availableIds = new Set(nextGoals.map((goal) => goal.goal_id));
+        setReportConfig((previous) => ({
+          ...previous,
+          goalIds: previous.goalIds.filter((id) => availableIds.has(id)),
+        }));
+      } finally {
+        setLoadingGoals(false);
+      }
+    }
+    loadGoals();
+  }, [reportConfig.selectedInitiative]);
+
 
   async function fetchReports() {
     setLoadingReports(true);
@@ -143,8 +173,9 @@ export default function ReportCreationPage() {
     if (currentStep === 0) {
       return reportConfig.selectedInitiative && reportConfig.reportName.trim().length > 0;
     }
-    if (currentStep === 1) {
-      return reportConfig.questionSelections.length > 0;
+    // Questions and goals are each optional, but a report needs at least one of them.
+    if (currentStep === 2) {
+      return reportConfig.questionSelections.length > 0 || reportConfig.goalIds.length > 0;
     }
     return true;
   }
@@ -182,6 +213,8 @@ export default function ReportCreationPage() {
           expressions: [],
           sorts: [],
           questionSelections: reportConfig.questionSelections,
+          goalIds: reportConfig.goalIds,
+          status: reportConfig.status,
           includeAiInsights: reportConfig.includeAiInsights || false,
         }),
       });
@@ -200,11 +233,13 @@ export default function ReportCreationPage() {
         reportName: '',
         description: '',
         questionSelections: [],
+        goalIds: [],
+        status: 'completed',
         startDate: '',
         endDate: '',
         includeAiInsights: false,
       });
-      setSuccessMessage('Report generated and published to Reporting.');
+      setSuccessMessage(`Report generated with status: ${getReportStatusLabel(reportConfig.status)}.`);
       getUiEventBus().publish(EVENTS.REPORT_UPDATED, {
         reportId: successPayload.reportId,
         initiativeId: reportConfig.selectedInitiative?.id,
@@ -229,8 +264,6 @@ export default function ReportCreationPage() {
     const colors = {
       published: { bg: '#d1fae5', text: '#065f46', border: '#a7f3d0' },
       completed: { bg: '#fef3c7', text: '#92400e', border: '#fde68a' },
-      generating: { bg: '#dbeafe', text: '#1e40af', border: '#bfdbfe' },
-      failed: { bg: '#fee2e2', text: '#991b1b', border: '#fecaca' },
       archived: { bg: '#f3f4f6', text: '#4b5563', border: '#d1d5db' },
       draft: { bg: '#f3f4f6', text: '#4b5563', border: '#d1d5db' },
     };
@@ -271,9 +304,19 @@ export default function ReportCreationPage() {
         );
       case 2:
         return (
+          <StepGoals
+            reportConfig={reportConfig}
+            onChange={updateConfig}
+            goals={goals}
+            loading={loadingGoals}
+          />
+        );
+      case 3:
+        return (
           <StepPreview
             reportConfig={reportConfig}
             tableData={tableData}
+            selectedGoals={goals.filter((goal) => reportConfig.goalIds.includes(goal.goal_id))}
             onGenerate={handleGenerate}
             isSubmitting={isSubmitting}
           />
