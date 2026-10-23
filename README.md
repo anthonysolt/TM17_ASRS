@@ -21,7 +21,7 @@ Run the following commands:
 - `sudo -u postgres psql -c 'CREATE DATABASE "asrs_1.20" WITH TEMPLATE asrs OWNER asrs;'`
 - `vim .env.local`
   - Hit the "I" key
-  - Left click and paste `DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs_1.20` into the `.env` file
+  - Right click and paste `DATABASE_URL=postgresql://asrs:change-me@localhost:5432/asrs_1.20` into the `.env` file
     - Type `:wq` to write and exit
 - `npm run db:schema`
 - `npm run db:migrate`
