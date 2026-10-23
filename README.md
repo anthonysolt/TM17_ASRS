@@ -12,6 +12,8 @@ If you have already downloaded and set up the 1.20 version, please follow these 
   - Open the `TM17_ASRS-TM17_1.20` folder on your desktop and open the nested `TM17_ASRS-TM17_1.20` folder
   - Right-click in the folder and select "Open in Terminal"
 
+# Fresh Install Instructions
+
 Run the following commands:
 
 - `npm install`
