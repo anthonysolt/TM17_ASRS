@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import db, { initializeDatabase } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { queryInitiativeQuestions } from '@/lib/query-helpers';
+import { loadQuestionOptions } from '@/lib/goals/question-source';
 
 // GET - Survey questions a goal can source its current value from.
 // One entry per question (root id), labelled with its most recent iteration.
@@ -20,6 +21,9 @@ export async function GET(request) {
       id: question.field_id,
       label: question.field_label || `Question ${question.field_id}`,
       type: question.field_type,
+      active: Number(question.is_active) === 1,
+      // Current answer options, for answer-based goal methods.
+      options: loadQuestionOptions(db, initiativeId, question.field_id),
     }));
 
     return NextResponse.json({ questions });

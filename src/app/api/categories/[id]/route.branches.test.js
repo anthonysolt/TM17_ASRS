@@ -30,7 +30,8 @@ describe('/api/categories/:id extra branches', () => {
       const query = String(sql || '');
       if (query.includes('SELECT * FROM category WHERE category_id = ?')) return { get: () => ({ category_name: 'A' }) };
       if (query.includes('DELETE FROM category')) return { run: vi.fn() };
-      return { get: vi.fn(), run: vi.fn() };
+      // The route lists linked initiatives (for the audit log) before deleting.
+      return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
     expect((await DELETE(new Request('http://localhost:3000/api/categories/1'), { params: Promise.resolve({ id: '1' }) })).status).toBe(200);
   });

@@ -40,7 +40,7 @@ export default function AdminGoalConflictsPage() {
       return;
     }
     if (user.user_type !== 'admin') {
-      router.push('/');
+      router.push('/dashboard');
     }
   }, [router, user, hydrated]);
 

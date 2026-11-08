@@ -18,6 +18,16 @@
  * - showDataTools: boolean — Whether the Data Tools section is expanded (optional).
  * - onToggleDataTools: Function — Callback to toggle Data Tools visibility (optional).
  * - computedSummary: Object — Computed numeric summaries keyed by column (optional).
+ * - title: string — Card heading (optional, default "Data Table").
+ * - columnLabels: Object — Header labels keyed by column, used instead of the
+ *   automatic camelCase formatting (optional).
+ * - embedded: boolean — Render without the card frame and heading, for use
+ *   inside another card (optional).
+ * - selectedIds: Array — Row ids currently selected; passing it (with
+ *   onSelectionChange) adds a checkbox column (optional).
+ * - onSelectionChange: Function — Callback(nextSelectedIds) (optional).
+ * - paginate: boolean — Show the rows-per-page pager (default true). Pass false
+ *   to show every row in `data` (e.g. when the caller loads rows in batches).
  * ============================================================================
  */
 'use client';
@@ -37,6 +47,12 @@ export default function DataTable({
   showDataTools,
   onToggleDataTools,
   computedSummary,
+  title = 'Data Table',
+  columnLabels,
+  embedded = false,
+  selectedIds,
+  onSelectionChange,
+  paginate = true,
 }) {
   const safeData = useMemo(() => (Array.isArray(data) ? data : []), [data]);
   const safeColumns = useMemo(() => (Array.isArray(columns) ? columns : []), [columns]);
@@ -47,15 +63,17 @@ export default function DataTable({
   const displayPage = Math.min(page, totalPages);
 
   const pagedData = useMemo(() => {
+    if (!paginate) return safeData;
     const start = (displayPage - 1) * pageSize;
     return safeData.slice(start, start + pageSize);
-  }, [safeData, displayPage, pageSize]);
+  }, [safeData, displayPage, pageSize, paginate]);
 
   /**
    * formatColumnName — Converts camelCase keys to human-readable labels.
    * Example: "sessionRating" -> "Session Rating"
    */
   function formatColumnName(key) {
+    if (columnLabels && columnLabels[key] != null) return columnLabels[key];
     return key
       .replace(/([A-Z])/g, ' $1')    // Add space before capital letters
       .replace(/^./, str => str.toUpperCase())  // Capitalize first letter
@@ -80,19 +98,35 @@ export default function DataTable({
     );
   }
 
+  // Optional row selection (checkbox column). The header box selects every row in `data`.
+  const selectable = Array.isArray(selectedIds) && typeof onSelectionChange === 'function';
+  const selectedSet = new Set(selectable ? selectedIds : []);
+  const allRowIds = safeData.map(row => row.id);
+  const allSelected = selectable && allRowIds.length > 0 && allRowIds.every(id => selectedSet.has(id));
+  const someSelected = selectable && !allSelected && allRowIds.some(id => selectedSet.has(id));
+
+  function toggleRow(id) {
+    onSelectionChange(selectedSet.has(id) ? selectedIds.filter(x => x !== id) : [...selectedIds, id]);
+  }
+
+  function toggleAll() {
+    onSelectionChange(allSelected ? [] : allRowIds);
+  }
+
   const hasActiveFilters = columnFilters && Object.values(columnFilters).some(v => v);
   const effectiveTotalRowCount = totalRowCount ?? safeData.length;
 
   return (
-    <div className="asrs-card" style={{ overflow: 'hidden', padding: '0' }}>
-      {/* ---- HEADER ---- */}
+    <div className={embedded ? undefined : 'asrs-card'} style={{ overflow: 'hidden', padding: '0' }}>
+      {/* ---- HEADER (hidden when embedded in another card) ---- */}
+      {!embedded && (
       <div style={{
         padding: '1rem 1.5rem',
         borderBottom: '1px solid var(--color-bg-tertiary)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center'
       }}>
         <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: 0 }}>
-          Data Table
+          {title}
         </h3>
         <span style={{ fontSize: '0.8rem', color: 'var(--color-text-light)' }}>
           {hasActiveFilters
@@ -100,6 +134,7 @@ export default function DataTable({
             : `${safeData.length} record${safeData.length !== 1 ? 's' : ''}`}
         </span>
       </div>
+      )}
 
       {/* ---- DATA TOOLS TOGGLE ---- */}
       {onToggleDataTools && (
@@ -192,6 +227,7 @@ export default function DataTable({
       )}
 
       {/* ---- PAGINATION CONTROLS ---- */}
+      {paginate && (
       <div style={{ padding: '0.6rem 1.5rem', borderBottom: '1px solid var(--color-bg-tertiary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.85rem' }}>
           Rows per page
@@ -230,6 +266,7 @@ export default function DataTable({
           </button>
         </div>
       </div>
+      )}
 
       {/* ---- EMPTY STATE ---- */}
       {safeData.length === 0 ? (
@@ -247,6 +284,18 @@ export default function DataTable({
             }}>
               <thead>
                 <tr style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
+                  {selectable && (
+                    <th style={{ width: 40, padding: '0.75rem 0.5rem 0.75rem 1rem', borderBottom: '2px solid var(--color-bg-tertiary)' }}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        ref={el => { if (el) el.indeterminate = someSelected; }}
+                        onChange={toggleAll}
+                        aria-label={allSelected ? 'Deselect all rows' : 'Select all rows'}
+                        style={{ cursor: 'pointer', accentColor: '#E67E22', width: 16, height: 16 }}
+                      />
+                    </th>
+                  )}
                   {displayColumns.map(col => (
                     <th
                       key={col}
@@ -270,14 +319,28 @@ export default function DataTable({
                 </tr>
               </thead>
               <tbody>
-                {pagedData.map((row, rowIndex) => (
+                {pagedData.map((row, rowIndex) => {
+                  const isSelected = selectable && selectedSet.has(row.id);
+                  return (
                   <tr key={row.id || rowIndex} style={{
                     borderBottom: '1px solid var(--color-bg-secondary)',
-                    transition: 'background-color 0.15s ease'
+                    transition: 'background-color 0.15s ease',
+                    backgroundColor: isSelected ? '#FFF7ED' : 'transparent',
                   }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = isSelected ? '#FFF7ED' : 'transparent'; }}
                   >
+                    {selectable && (
+                      <td style={{ padding: '0.65rem 0.5rem 0.65rem 1rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleRow(row.id)}
+                          aria-label={`Select row ${row.id}`}
+                          style={{ cursor: 'pointer', accentColor: '#E67E22', width: 16, height: 16 }}
+                        />
+                      </td>
+                    )}
                     {displayColumns.map(col => (
                       <td
                         key={col}
@@ -287,11 +350,12 @@ export default function DataTable({
                           whiteSpace: 'nowrap'
                         }}
                       >
-                        {row[col] !== undefined ? String(row[col]) : '\u2014'}
+                        {row[col] === undefined ? '\u2014' : Array.isArray(row[col]) ? row[col].join(', ') : String(row[col])}
                       </td>
                     ))}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

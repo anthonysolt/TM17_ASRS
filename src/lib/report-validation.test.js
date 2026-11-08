@@ -53,6 +53,23 @@ describe('report-validation', () => {
     expect(empty.error).toContain('question or goal');
   });
 
+  test('response date range is optional, YYYY-MM-DD, and From cannot be after To', () => {
+    const base = { initiativeId: 2, questionSelections: [{ id: 12 }] };
+    expect(validateReportCreatePayload(base).value).toMatchObject({ startDate: null, endDate: null });
+    expect(validateReportCreatePayload({ ...base, startDate: '', endDate: null }).value).toMatchObject({ startDate: null, endDate: null });
+    expect(validateReportCreatePayload({ ...base, startDate: '2026-01-01', endDate: '2026-03-31' }).value)
+      .toMatchObject({ startDate: '2026-01-01', endDate: '2026-03-31' });
+    expect(validateReportCreatePayload({ ...base, startDate: '2026-03-31', endDate: '2026-03-31' }).valid).toBe(true);
+
+    const badFormat = validateReportCreatePayload({ ...base, startDate: '01/02/2026' });
+    expect(badFormat.valid).toBe(false);
+    expect(badFormat.error).toContain('startDate');
+
+    const reversed = validateReportCreatePayload({ ...base, startDate: '2026-04-01', endDate: '2026-03-31' });
+    expect(reversed.valid).toBe(false);
+    expect(reversed.error).toContain('after');
+  });
+
   test('status after generating defaults to unpublished and is limited to known statuses', () => {
     const base = { initiativeId: 2, questionSelections: [{ id: 12 }] };
     expect(validateReportCreatePayload(base).value.status).toBe('completed');
@@ -78,6 +95,43 @@ describe('report-validation', () => {
     const result = validateReportCreatePayload({ initiativeId: 2, questionSelections: [{ id: 12 }], goalIds });
     expect(result.valid).toBe(false);
     expect(result.error).toContain(error);
+  });
+
+  test('normalizes per-question filters', () => {
+    const result = validateReportCreatePayload({
+      initiativeId: 2,
+      questionSelections: [
+        { id: 1, method: 'average', filter: { scope: 'question', values: ['Yes', 'Yes', 'No'] } },
+        { id: 2, method: 'average', filter: { scope: 'report', min: '2', max: 5 } },
+        { id: 3, method: 'average', filter: { scope: 'report', values: [] } },
+        { id: 4, method: 'average', filter: { scope: 'question' } },
+        { id: 5, method: 'average' },
+      ],
+    });
+    expect(result.valid).toBe(true);
+    expect(result.value.questionSelections.map((selection) => selection.filter)).toEqual([
+      { scope: 'question', values: ['Yes', 'No'] },
+      { scope: 'report', min: 2, max: 5 },
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  test.each([
+    [{ scope: 'everything', values: ['Yes'] }, 'scope'],
+    [{ scope: 'report', values: 'Yes' }, 'array of strings'],
+    [{ scope: 'report', values: [1] }, 'array of strings'],
+    [{ scope: 'report', min: 'abc' }, 'min must be a number'],
+    [{ scope: 'report', min: 5, max: 2 }, 'greater than max'],
+    ['Yes', 'must be an object'],
+  ])('rejects invalid question filter %j', (filter, message) => {
+    const result = validateReportCreatePayload({
+      initiativeId: 2,
+      questionSelections: [{ id: 1, method: 'average', filter }],
+    });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain(message);
   });
 
   test('validates update payload', () => {

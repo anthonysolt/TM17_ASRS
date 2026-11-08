@@ -6,7 +6,8 @@ import Link from 'next/link';
 import PageLayout from '@/components/PageLayout';
 import ReportDashboard from '@/components/ReportDashboard';
 import { getInitiatives, getReportData, getTrendData } from '@/lib/data-service';
-import { normalizeSnapshot } from '@/lib/report-snapshot';
+import { getAppliedQuestionFilters, getStoredRowInfo, normalizeSnapshot } from '@/lib/report-snapshot';
+import { formatDateRange, getReportDateRange } from '@/lib/report-date-range';
 
 export default function ReportViewPage() {
   const { id } = useParams();
@@ -60,8 +61,11 @@ export default function ReportViewPage() {
             summary: results.summary,
             chartData: results.chartData,
             tableData: results.filteredTableData,
+            ...getStoredRowInfo(results),
             explainability: results.explainability,
             goals: results.goals,
+            questionFilters: getAppliedQuestionFilters(normalized.config),
+            dateRange: getReportDateRange(normalized.config),
           };
           setReportData(shaped);
           setTrendData(results.trendData || []);
@@ -91,8 +95,9 @@ export default function ReportViewPage() {
     const sorts = snapshotConfig.sorts || [];
     const trendConfig = snapshotConfig.trendConfig || null;
     const hasTrendVariables = (trendConfig?.variables || []).length > 0;
+    const dateRange = getReportDateRange(snapshotConfig);
 
-    if (filterEntries.length === 0 && expressions.length === 0 && sorts.length === 0 && !hasTrendVariables) {
+    if (filterEntries.length === 0 && expressions.length === 0 && sorts.length === 0 && !hasTrendVariables && !dateRange) {
       return null;
     }
 
@@ -106,6 +111,12 @@ export default function ReportViewPage() {
           Report Configuration
         </h3>
         <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+          {dateRange && (
+            <div>
+              <span style={{ fontWeight: '600', color: '#6B7280' }}>Date range: </span>
+              responses submitted {formatDateRange(dateRange)}
+            </div>
+          )}
           {filterEntries.length > 0 && (
             <div>
               <span style={{ fontWeight: '600', color: '#6B7280' }}>Filters: </span>
@@ -140,23 +151,24 @@ export default function ReportViewPage() {
 
   return (
     <PageLayout title={report ? (report.name || 'Untitled Report') : 'Create Report'}>
-      <div style={{ marginBottom: '1rem' }}>
-        <Link href="/reporting" className="btn-outline">← Back to Reporting</Link>
-      </div>
-
-      {/* Report name + description header */}
-      {report && (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0, color: '#111827' }}>
-            {report.name || 'Untitled Report'}
-          </h1>
-          {report.description && (
-            <p style={{ color: '#6B7280', marginTop: '0.25rem' }}>
-              {report.description}
-            </p>
+      {/* Header: report name + description on the left, back button top right (like the initiative and survey pages) */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+        <div style={{ minWidth: 0 }}>
+          {report && (
+            <>
+              <h1 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0, color: '#111827' }}>
+                {report.name || 'Untitled Report'}
+              </h1>
+              {report.description && (
+                <p style={{ color: '#6B7280', marginTop: '0.25rem' }}>
+                  {report.description}
+                </p>
+              )}
+            </>
           )}
         </div>
-      )}
+        <Link href="/reporting" className="btn-outline" style={{ marginLeft: 'auto', fontSize: '0.85rem' }}>← Back to Reporting</Link>
+      </div>
 
       {isLoading ? (
         <div style={{

@@ -65,7 +65,7 @@ export default function ManageReportsPage() {
     }
     const parsed = JSON.parse(storedUser);
     if (parsed.user_type !== 'staff' && parsed.user_type !== 'admin') {
-      router.push('/');
+      router.push('/dashboard');
       return;
     }
     loadData();

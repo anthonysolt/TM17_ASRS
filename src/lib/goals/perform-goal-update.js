@@ -11,6 +11,7 @@ const ALLOWED_FIELDS = [
   'deadline',
   'source_root_field_id',
   'source_method',
+  'source_answer',
 ];
 
 function isValidWeight(weight) {
@@ -99,8 +100,10 @@ function rebalanceGoalWeights(db, existing, requestedWeight) {
 export function performGoalUpdate(db, existing, updates, { userEmail }) {
   const goal_id = existing.goal_id;
 
-  if (updates.scoring_method && !['linear', 'threshold', 'binary'].includes(updates.scoring_method)) {
-    return { error: 'Invalid scoring_method. Must be: linear, threshold, or binary' };
+  // Threshold is no longer offered; goals already using it may keep it.
+  const allowedMethods = existing.scoring_method === 'threshold' ? ['linear', 'threshold', 'binary'] : ['linear', 'binary'];
+  if (updates.scoring_method && !allowedMethods.includes(updates.scoring_method)) {
+    return { error: 'Invalid scoring_method. Must be: linear or binary' };
   }
   if (updates.weight !== undefined && !isValidWeight(updates.weight)) {
     return { error: 'Weight must be between 0 and 100 with no more than two decimal places' };

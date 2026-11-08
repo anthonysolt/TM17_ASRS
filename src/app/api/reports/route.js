@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { querySelectedQuestionData } from '@/lib/query-helpers';
+import { querySelectedQuestionData, submittedAtClause } from '@/lib/query-helpers';
 import { queryReportGoals } from '@/lib/goals/report-goals';
 import {
   validateReportCreatePayload,
@@ -14,6 +14,8 @@ import { requirePermission } from '@/lib/auth/server-auth';
 import { alertDb } from '@/lib/db-alerts';
 import { logAudit } from '@/lib/audit';
 // import { generateReportInsights } from '@/lib/openai-report-insights';
+import { buildQuestionChartData, isQuestionFilterActive, rowsForAnalysis } from '@/lib/report-engine';
+import { capStoredRows } from '@/lib/reports/report-rows';
 
 function startGenerationLog(db, payload) {
   return db.prepare(`
@@ -87,7 +89,10 @@ export async function GET(request) {
     }
 
     const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-    const sql = `SELECT r.*, i.initiative_name
+    // The list leaves out report_data (the saved snapshot, which can be large);
+    // GET /api/reports/[id] returns it when a report is opened or downloaded.
+    const sql = `SELECT r.id, r.initiative_id, r.name, r.description, r.status, r.created_by,
+                r.display_order, r.created_at, r.published_at, i.initiative_name
          FROM reports r
          LEFT JOIN initiative i ON r.initiative_id = i.initiative_id
          ${whereClause}
@@ -138,7 +143,10 @@ export async function POST(request) {
     }
 
     const selectedIds = payload.questionSelections.map((selection) => selection.id);
-    const selectedQuestionData = querySelectedQuestionData(db, initiativeId, selectedIds);
+    // Optional response date range (submission.submitted_at, inclusive).
+    const dateRange = { startDate: payload.startDate, endDate: payload.endDate };
+    const dateClause = submittedAtClause(dateRange);
+    const selectedQuestionData = querySelectedQuestionData(db, initiativeId, selectedIds, dateRange);
     if (selectedQuestionData.questions.length !== selectedIds.length) {
       return NextResponse.json(
         { error: 'One or more selected questions do not belong to this initiative' },
@@ -159,8 +167,8 @@ export async function POST(request) {
 
     // Compute summary from real submission data
     const submissionCount = db.prepare(
-      'SELECT COUNT(*) as count FROM submission WHERE initiative_id = ?'
-    ).get(initiativeId).count;
+      `SELECT COUNT(*) as count FROM submission s WHERE s.initiative_id = ?${dateClause.sql}`
+    ).get(initiativeId, ...dateClause.params).count;
 
     const avgResult = db.prepare(`
       SELECT AVG(sv.value_number) as avg_score
@@ -168,8 +176,8 @@ export async function POST(request) {
       JOIN submission s ON s.submission_id = sv.submission_id
       JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
       JOIN field f ON f.field_id = fq.field_id
-      WHERE s.initiative_id = ? AND f.field_type = 'rating' AND sv.value_number IS NOT NULL
-    `).get(initiativeId);
+      WHERE s.initiative_id = ? AND f.field_type = 'rating' AND sv.value_number IS NOT NULL${dateClause.sql}
+    `).get(initiativeId, ...dateClause.params);
 
     const totalForms = db.prepare(
       'SELECT COUNT(*) as count FROM form WHERE initiative_id = ?'
@@ -185,75 +193,6 @@ export async function POST(request) {
         : 0,
     };
 
-    // Compute chart data from real submission values
-    // field_id is the question's root id, so answers from every revision count.
-    const chartFields = selectedQuestionData.questions;
-
-    const chartData = {};
-    const MAX_CATEGORICAL_VALUES = 15;
-    for (const field of chartFields) {
-      const key = field.field_label || field.field_key;
-
-      if (['select', 'choice', 'multiselect', 'yesno', 'boolean'].includes(field.field_type)) {
-        const distribution = db.prepare(`
-          SELECT sv.value_text as name, COUNT(*) as value
-          FROM submission_value sv
-          JOIN submission s ON s.submission_id = sv.submission_id
-          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
-          GROUP BY sv.value_text
-          ORDER BY value DESC
-        `).all(initiativeId, field.field_id);
-        if (distribution.length > 0) {
-          chartData[key] = distribution;
-        }
-      } else if (field.field_type === 'rating') {
-        const distribution = db.prepare(`
-          SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
-          FROM submission_value sv
-          JOIN submission s ON s.submission_id = sv.submission_id
-          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
-          GROUP BY CAST(sv.value_number AS INTEGER)
-          ORDER BY name
-        `).all(initiativeId, field.field_id);
-        if (distribution.length > 0) {
-          chartData[key] = distribution.map(d => ({
-            name: `Rating ${d.name}`,
-            value: d.value,
-          }));
-        }
-      } else if (field.field_type === 'text') {
-        // Text fields with low cardinality are categorical — chart them
-        const distribution = db.prepare(`
-          SELECT sv.value_text as name, COUNT(*) as value
-          FROM submission_value sv
-          JOIN submission s ON s.submission_id = sv.submission_id
-          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_text IS NOT NULL
-          GROUP BY sv.value_text
-          ORDER BY value DESC
-        `).all(initiativeId, field.field_id);
-        if (distribution.length > 1 && distribution.length <= MAX_CATEGORICAL_VALUES) {
-          chartData[key] = distribution;
-        }
-      } else if (field.field_type === 'number') {
-        // Number fields with few distinct values — chart as discrete distribution
-        const distribution = db.prepare(`
-          SELECT CAST(sv.value_number AS INTEGER) as name, COUNT(*) as value
-          FROM submission_value sv
-          JOIN submission s ON s.submission_id = sv.submission_id
-          JOIN form_questions fq ON fq.form_question_id = sv.form_question_id
-          WHERE s.initiative_id = ? AND fq.root_field_id = ? AND sv.value_number IS NOT NULL
-          GROUP BY CAST(sv.value_number AS INTEGER)
-          ORDER BY name
-        `).all(initiativeId, field.field_id);
-        if (distribution.length > 1 && distribution.length <= 10) {
-          chartData[key] = distribution.map(d => ({ name: String(d.name), value: d.value }));
-        }
-      }
-    }
-
     const filters = payload.filters || {};
     const expressions = payload.expressions || [];
     const sorts = payload.sorts || [];
@@ -265,8 +204,10 @@ export async function POST(request) {
       label: question.field_label || question.column,
       versionNumber: question.version_number,
       column: question.column,
+      type: question.field_type,
       method: selectionsById.get(question.field_id).method,
       thresholdPct: 2,
+      filter: selectionsById.get(question.field_id).filter || null,
     }));
     for (const analysis of questionAnalyses) {
       const validation = reportEngine.validateTrendConfig({
@@ -293,11 +234,36 @@ export async function POST(request) {
       filters,
       expressions,
       sorts,
-      attributes
+      attributes,
+      questionAnalyses
     );
 
+    const chartData = buildQuestionChartData(filteredData, questionAnalyses);
+
+    // Whole-report question filters narrow the respondent pool, so the
+    // headline numbers must describe the filtered rows instead of every submission.
+    const hasReportScopedFilter = questionAnalyses.some((analysis) =>
+      analysis.filter?.scope === 'report' && isQuestionFilterActive(analysis.filter)
+    );
+    if (hasReportScopedFilter) {
+      const ratingAnalyses = questionAnalyses.filter((analysis) => analysis.type === 'rating');
+      const ratingValues = ratingAnalyses
+        .flatMap((analysis) => filteredData.map((row) => row[analysis.column]))
+        .filter((value) => value !== null && value !== undefined && value !== '')
+        .map(Number)
+        .filter(Number.isFinite);
+      summary.totalParticipants = filteredData.length;
+      // Without selected rating questions there is nothing to recompute from,
+      // so keep the initiative-wide average rather than reporting 0.
+      if (ratingAnalyses.length > 0) {
+        summary.averageRating = ratingValues.length > 0
+          ? Math.round((ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length) * 10) / 10
+          : 0;
+      }
+    }
+
     const trendData = questionAnalyses.flatMap((analysis) => {
-      return reportEngine.computeTrendData(filteredData, analysis.trendConfig, {
+      return reportEngine.computeTrendData(rowsForAnalysis(filteredData, analysis), analysis.trendConfig, {
         initiativeId,
         reportName: payload.name || '',
       });
@@ -333,6 +299,11 @@ export async function POST(request) {
     //   }
     // }
 
+    // The snapshot keeps the summary, charts, trends and goals in full, but only
+    // the first rows for the on-screen table; downloads fetch every row live
+    // from GET /api/reports/[id]/rows.
+    const storedRows = capStoredRows(filteredData);
+
     const snapshot = {
       version: 2,
       config: {
@@ -343,11 +314,14 @@ export async function POST(request) {
         sorts,
         questionSelections: questionAnalyses.map(({ trendConfig: _trendConfig, ...analysis }) => analysis),
         goalIds: payload.goalIds,
+        dateRange: { startDate: payload.startDate || null, endDate: payload.endDate || null },
       },
       results: {
         metrics,
         explainability,
-        filteredTableData: filteredData,
+        filteredTableData: storedRows.rows,
+        tableRowCount: storedRows.totalRows,
+        tableRowsTruncated: storedRows.truncated,
         chartData,
         trendData,
         goals,

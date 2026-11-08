@@ -52,6 +52,24 @@ describe('/api/initiatives integration', () => {
     expect(payload.initiatives[0].name).toBe('Career Prep');
   });
 
+  test('GET counts each initiative\'s members', async () => {
+    const initiativeId = insertInitiative(state.db, { initiative_name: 'Career Prep' });
+    const emptyId = insertInitiative(state.db, { initiative_name: 'No Members' });
+    const { user_type_id: typeId } = state.db.prepare("SELECT user_type_id FROM user_type WHERE type = 'public'").get();
+    const addUser = (email) => Number(state.db.prepare(
+      "INSERT INTO user (user_type_id, first_name, last_name, email, password) VALUES (?, 'A', 'B', ?, 'x')"
+    ).run(typeId, email).lastInsertRowid);
+    const addMember = state.db.prepare('INSERT INTO initiative_member (initiative_id, user_id, role) VALUES (?, ?, ?)');
+    addMember.run(initiativeId, addUser('one@test.local'), 'participant');
+    addMember.run(initiativeId, addUser('two@test.local'), 'staff');
+
+    const payload = await (await GET()).json();
+    const byId = Object.fromEntries(payload.initiatives.map((i) => [i.id, i]));
+
+    expect(byId[initiativeId].member_count).toBe(2);
+    expect(byId[emptyId].member_count).toBe(0);
+  });
+
   test('POST returns 401 without session in non-test env', async () => {
     process.env.NODE_ENV = 'development';
 

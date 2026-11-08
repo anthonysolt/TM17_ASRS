@@ -1,3 +1,6 @@
+// The route imports the PostgreSQL client; mock it so no DATABASE_URL is needed.
+const dbMock = vi.hoisted(() => ({ prepare: vi.fn(() => ({ get: vi.fn(), all: vi.fn(() => []), run: vi.fn() })) }));
+vi.mock('@/lib/db', () => ({ db: dbMock, default: dbMock, initializeDatabase: vi.fn() }));
 const alertDbMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 
 vi.mock('@/lib/db-alerts', () => ({

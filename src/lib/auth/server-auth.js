@@ -5,6 +5,9 @@ export const SESSION_COOKIE_NAME = 'asrs_session';
 export const CSRF_COOKIE_NAME = 'asrs_csrf';
 const SESSION_IDLE_MS = 8 * 60 * 60 * 1000;
 const SESSION_ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
+// Refresh last_seen_at / the idle expiry at most this often, instead of writing
+// the session row on every API request (each write is a blocking DB round trip).
+const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 
 function isProduction() {
   return process.env.NODE_ENV === 'production';
@@ -84,6 +87,7 @@ function getSessionRecord(db, token) {
       s.expires_at,
       s.absolute_expires_at,
       s.revoked_at,
+      s.last_seen_at,
       u.first_name,
       u.last_name,
       u.email,
@@ -107,11 +111,14 @@ function getSessionRecord(db, token) {
     return null;
   }
 
-  db.prepare(`
-    UPDATE session
-    SET last_seen_at = ?, expires_at = ?
-    WHERE session_id = ?
-  `).run(toIso(now), toIso(now + SESSION_IDLE_MS), row.session_id);
+  const lastSeen = row.last_seen_at ? Date.parse(row.last_seen_at) : NaN;
+  if (!Number.isFinite(lastSeen) || now - lastSeen >= SESSION_TOUCH_INTERVAL_MS) {
+    db.prepare(`
+      UPDATE session
+      SET last_seen_at = ?, expires_at = ?
+      WHERE session_id = ?
+    `).run(toIso(now), toIso(now + SESSION_IDLE_MS), row.session_id);
+  }
 
   return row;
 }

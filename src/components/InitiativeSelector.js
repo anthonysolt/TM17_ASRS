@@ -18,7 +18,7 @@ export default function InitiativeSelector({
   initiatives,
   selectedInitiative,
   onSelect,
-  heading = 'Select initiative',
+  heading = 'Select Initiative',
   description = null,
 }) {
   /**

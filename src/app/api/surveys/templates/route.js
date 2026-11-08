@@ -2,22 +2,9 @@ import db from '../../../../lib/db.js';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { logAudit } from '@/lib/audit';
 import { deleteFormAndFields } from '@/lib/forms/delete-form';
-import { getLikertOptionDetails, isLikertType } from '@/lib/forms/likert-scales';
-
-// Map UI-only field types to valid DB types.
-// DB CHECK constraint: field_type IN ('text','number','date','boolean','select','multiselect','rating','json','choice','yesno')
-const UI_TO_DB_TYPE = {
-  textarea: 'text',
-  select: 'text',
-  choice: 'text',
-  checkbox: 'boolean',
-  radio: 'text',
-  email: 'text',
-  url: 'text',
-  likert_agreement: 'number',
-  likert_good_bad: 'number',
-  likert_like_dislike: 'number',
-};
+import { getFixedOptionDetails, hasFixedOptions } from '@/lib/forms/fixed-options';
+import { toDbFieldType } from '@/lib/forms/field-types';
+import { isUnchangedLibraryQuestion } from '@/lib/forms/create-form-revision';
 
 function resolveRules(fieldRulesJson, formFieldRulesJson) {
   const base = fieldRulesJson ? JSON.parse(fieldRulesJson) : null;
@@ -37,7 +24,7 @@ export async function GET() {
 
   // For each form, get questions
   const getQuestions = db.prepare(`
-    SELECT fq.form_question_id, f.field_id, f.field_label, f.field_type,
+    SELECT fq.form_question_id, fq.root_field_id, f.field_id, f.field_label, f.field_type,
            fq.required, fq.help_text, f.scope, f.initiative_id,
            f.validation_rules AS field_rules, fq.validation_rules AS form_question_rules
     FROM form_version_questions fvq
@@ -54,12 +41,13 @@ export async function GET() {
     const questions = getQuestions.all(form.id).map(q => {
       const rules = resolveRules(q.field_rules, q.form_question_rules);
       const displayType = (rules && rules.ui_type) || q.field_type;
-      const isOptionType = ['select', 'radio', 'checkbox', 'choice', 'multiselect'].includes(displayType) || isLikertType(displayType);
-      const isYesNo = displayType === 'yesno';
-      const optionRows = (isOptionType || isYesNo) ? getOptions.all(q.field_id) : [];
+      const isOptionType = ['select', 'radio', 'checkbox', 'choice', 'multiselect'].includes(displayType) || hasFixedOptions(displayType);
+      const optionRows = isOptionType ? getOptions.all(q.field_id) : [];
       const rawOptions = optionRows.map(opt => opt.option_value);
       return {
         id: q.field_id,
+        // Stable across revisions of the question; survey responses key answers by it.
+        rootId: q.root_field_id ?? q.field_id,
         text: {
           question: q.field_label,
           type: displayType,
@@ -69,7 +57,6 @@ export async function GET() {
           validation_rules: rules,
           ...(isOptionType && rawOptions ? { options: rawOptions } : {}),
           ...(isOptionType ? { optionDetails: optionRows.map(option => ({ value: option.option_value, label: option.display_label })) } : {}),
-          ...(isYesNo && rawOptions ? { subQuestions: rawOptions } : {}),
           ...(q.help_text ? { help_text: q.help_text } : {}),
         }
       };
@@ -152,13 +139,7 @@ export async function POST(request) {
         const fieldKey = `${title}_${displayOrder}_${Date.now()}`;
         const fieldLabel = textObj.question || '';
         const uiFieldType = textObj.type || 'text';
-        // For checkbox with options, use multiselect instead of boolean
-        let dbFieldType;
-        if (uiFieldType === 'checkbox' && Array.isArray(textObj.options) && textObj.options.length > 0) {
-          dbFieldType = 'multiselect';
-        } else {
-          dbFieldType = UI_TO_DB_TYPE[uiFieldType] || uiFieldType;
-        }
+        const dbFieldType = toDbFieldType(uiFieldType);
         const required = textObj.required ? 1 : 0;
         const isCoreQuestion = textObj.is_core_question ? 1 : 0;
         const isInitiativeSpecific = textObj.is_initiative_specific ? 1 : 0;
@@ -177,10 +158,11 @@ export async function POST(request) {
         const formFieldRulesJson = textObj.form_validation_rules ? JSON.stringify(textObj.form_validation_rules) : null;
 
         let fieldId;
-        // Only look up existing fields by numeric ID; synthetic IDs (strings) are always new
-        if (textObj.field_id && typeof textObj.field_id === 'number') {
-          const existingField = db.prepare('SELECT field_id FROM field WHERE field_id = ?').get(textObj.field_id);
-          if (existingField) fieldId = existingField.field_id;
+        // Reuse an existing field only when it is unchanged. An edited saved
+        // question becomes a new field (synthetic string IDs are always new).
+        if (textObj.field_id && typeof textObj.field_id === 'number'
+          && isUnchangedLibraryQuestion(db, textObj.field_id, textObj)) {
+          fieldId = textObj.field_id;
         }
         if (!fieldId) {
           // Insert field with the DB-safe type
@@ -191,19 +173,12 @@ export async function POST(request) {
           fieldId = fieldResult.lastInsertRowid;
 
           // Options remain attached even when the answer value is stored as text.
-          if ((['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(uiFieldType) && Array.isArray(textObj.options)) || isLikertType(uiFieldType)) {
-            const optionDetails = isLikertType(uiFieldType)
-              ? getLikertOptionDetails(uiFieldType)
+          if ((['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(uiFieldType) && Array.isArray(textObj.options)) || hasFixedOptions(uiFieldType)) {
+            const optionDetails = hasFixedOptions(uiFieldType)
+              ? getFixedOptionDetails(uiFieldType)
               : textObj.options.map(option => ({ value: option, label: option }));
             optionDetails.forEach((option, idx) => {
               insertOption.run(fieldId, String(option.value), option.label, idx);
-            });
-          }
-
-          // Insert sub-questions for yesno type (stored as field_options)
-          if (dbFieldType === 'yesno' && Array.isArray(textObj.subQuestions)) {
-            textObj.subQuestions.forEach((sub, idx) => {
-              insertOption.run(fieldId, sub, sub, idx);
             });
           }
         }
@@ -218,10 +193,9 @@ export async function POST(request) {
             question: fieldLabel,
             type: uiFieldType,
             required: !!required,
-            ...(isLikertType(uiFieldType)
-              ? { options: getLikertOptionDetails(uiFieldType).map(option => option.label) }
+            ...(hasFixedOptions(uiFieldType)
+              ? { options: getFixedOptionDetails(uiFieldType).map(option => option.label) }
               : ['select', 'radio', 'choice', 'checkbox', 'multiselect'].includes(uiFieldType) && textObj.options ? { options: textObj.options } : {}),
-            ...(dbFieldType === 'yesno' && textObj.subQuestions ? { subQuestions: textObj.subQuestions } : {}),
             is_core_question: !!isCoreQuestion,
             is_initiative_specific: !!isInitiativeSpecific
           }
@@ -290,28 +264,6 @@ export async function DELETE(request) {
     };
 
     const deleteTx = db.transaction((id) => {
-      const quoteSurveyIds = tableExists('surveys')
-        ? db.prepare('SELECT id, responses FROM surveys').all()
-            .filter((survey) => {
-              try {
-                return Number(JSON.parse(survey.responses)?.templateId) === Number(id);
-              } catch {
-                return false;
-              }
-            })
-            .map((survey) => survey.id)
-        : [];
-
-      if (quoteSurveyIds.length && tableExists('reports')) {
-        const deleteReport = db.prepare('DELETE FROM reports WHERE survey_id = ?');
-        quoteSurveyIds.forEach((sid) => deleteReport.run(sid));
-      }
-
-      if (tableExists('surveys')) {
-        const deleteSurvey = db.prepare('DELETE FROM surveys WHERE id = ?');
-        quoteSurveyIds.forEach((surveyId) => deleteSurvey.run(surveyId));
-      }
-
       if (tableExists('survey_distribution')) {
         db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
       }

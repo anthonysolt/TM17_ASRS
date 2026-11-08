@@ -71,6 +71,14 @@ export default function StepQuestions({ reportConfig, onChange, questions, loadi
               >
                 <span style={{ color: '#111827', fontWeight: selected ? 600 : 500 }}>
                   {question.label}
+                  {question.active === false && (
+                    <span
+                      title="Removed from its survey. Earlier responses are still included."
+                      style={{ marginLeft: '0.5rem', fontSize: '0.75rem', fontWeight: 500, color: '#6B7280' }}
+                    >
+                      (retired)
+                    </span>
+                  )}
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
                   <label htmlFor={`question-method-${question.id}`} style={{ fontSize: '0.8rem', color: '#6B7280' }}>

@@ -28,6 +28,9 @@ describe('survey-template-adapter', () => {
       required: false,
       options: ['Good', 'Bad'],
       helpText: 'Pick one',
+      scope: null,
+      initiative_id: null,
+      validation_rules: null,
     });
   });
 });

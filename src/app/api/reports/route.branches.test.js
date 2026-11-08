@@ -15,7 +15,7 @@ vi.mock('@/lib/report-validation', () => ({
   validateReportUpdatePayload: validateReportUpdatePayloadMock,
 }));
 
-vi.mock('@/lib/query-helpers', () => ({ querySelectedQuestionData: querySelectedQuestionDataMock }));
+vi.mock('@/lib/query-helpers', async (importOriginal) => ({ submittedAtClause: (await importOriginal()).submittedAtClause, querySelectedQuestionData: querySelectedQuestionDataMock }));
 vi.mock('@/lib/adapters/report-adapter', () => ({
   toReportListItemDto: toReportListItemDtoMock,
   toReportDetailDto: toReportDetailDtoMock,

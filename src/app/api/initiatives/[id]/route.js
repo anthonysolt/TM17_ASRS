@@ -38,6 +38,7 @@ export async function GET(request, { params }) {
         MIN(c.category_name) AS category_name,
         (SELECT COUNT(*) FROM submission s WHERE s.initiative_id = i.initiative_id) AS submission_count,
         (SELECT COUNT(DISTINCT s.submitted_by_user_id) FROM submission s WHERE s.initiative_id = i.initiative_id AND s.submitted_by_user_id IS NOT NULL) AS participant_count,
+        (SELECT COUNT(*) FROM initiative_member im JOIN user u ON u.user_id = im.user_id WHERE im.initiative_id = i.initiative_id) AS member_count,
         (SELECT AVG(
           CASE WHEN g.target_value > 0 THEN (g.current_value / g.target_value) * 100 ELSE 0 END
         ) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS avg_score

@@ -48,7 +48,8 @@ export default function InitiativeReportsView({ slug }) {
 
   // Reports fetched for a given initiative id; loading is derived by comparing ids.
   const [reportsResult, setReportsResult] = useState({ initiativeId: null, reports: [], error: null });
-  const [selectedReportId, setSelectedReportId] = useState(null);
+  // Reports start collapsed; each caret opens that report's dashboard in place.
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
 
   const initiativeId = initiative?.id ?? null;
   const reportsLoading = initiativeId != null && reportsResult.initiativeId !== initiativeId;
@@ -64,7 +65,7 @@ export default function InitiativeReportsView({ slug }) {
         if (cancelled) return;
         const list = data.reports || [];
         setReportsResult({ initiativeId, reports: list, error: null });
-        setSelectedReportId(list[0]?.id ?? null);
+        setExpandedIds(new Set());
       })
       .catch((err) => {
         if (!cancelled) setReportsResult({ initiativeId, reports: [], error: err });
@@ -72,8 +73,13 @@ export default function InitiativeReportsView({ slug }) {
     return () => { cancelled = true; };
   }, [initiativeId]);
 
-  const selectedReport = reports.find((r) => String(r.id) === String(selectedReportId)) || null;
-  const parsed = useMemo(() => (selectedReport ? parseReportForDashboard(selectedReport) : null), [selectedReport]);
+  function toggleReport(id) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   const title = initiative ? `${initiative.name} Reports` : 'Initiative reports';
 
@@ -98,7 +104,7 @@ export default function InitiativeReportsView({ slug }) {
             {initiative.name}
           </h1>
           <p className="public-reporting-intro-body">
-            {initiative.description || 'Published reports for this initiative. Select a report to view its charts and tables.'}
+            {initiative.description || 'Published reports for this initiative. Expand a report to view its charts and tables.'}
           </p>
         </section>
 
@@ -118,57 +124,79 @@ export default function InitiativeReportsView({ slug }) {
                 Published reports ({reports.length})
               </div>
               {reports.map((report) => {
-                const isSelected = String(selectedReportId) === String(report.id);
+                const isExpanded = expandedIds.has(report.id);
+                const detailsId = `report-details-${report.id}`;
+                const parsed = isExpanded ? parseReportForDashboard(report) : null;
                 return (
-                  <button
+                  <div
                     key={report.id}
-                    type="button"
-                    onClick={() => setSelectedReportId(report.id)}
-                    aria-pressed={isSelected}
                     style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '1rem',
-                      padding: '1rem 1.25rem',
-                      border: isSelected ? '2px solid #E67E22' : '1px solid #E5E7EB',
+                      border: isExpanded ? '2px solid #E67E22' : '1px solid #E5E7EB',
                       borderRadius: '10px',
-                      backgroundColor: isSelected ? '#FFF7ED' : '#fff',
-                      color: '#111827',
-                      cursor: 'pointer',
-                      textAlign: 'left',
+                      backgroundColor: '#fff',
+                      overflow: 'hidden',
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{report.name || 'Untitled Report'}</div>
-                      <div style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: '#6B7280' }}>
-                        {formatDate(report.created_at)}
-                        {report.description ? ` · ${report.description}` : ''}
+                    {/* The whole header toggles the report; the caret is the explicit control. */}
+                    <div
+                      onClick={() => toggleReport(report.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '1rem',
+                        padding: '1rem 1.25rem',
+                        backgroundColor: isExpanded ? '#FFF7ED' : '#fff',
+                        color: '#111827',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>{report.name || 'Untitled Report'}</div>
+                        <div style={{ marginTop: '0.25rem', fontSize: '0.8rem', color: '#6B7280' }}>
+                          {formatDate(report.created_at)}
+                          {report.description ? ` · ${report.description}` : ''}
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        className="row-icon-btn"
+                        aria-expanded={isExpanded}
+                        aria-controls={detailsId}
+                        aria-label={`${isExpanded ? 'Hide' : 'Show'} ${report.name || 'report'}`}
+                        title={isExpanded ? 'Hide report' : 'Show report'}
+                        onClick={(e) => { e.stopPropagation(); toggleReport(report.id); }}
+                        style={{ flexShrink: 0 }}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
                     </div>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: isSelected ? '#C2410C' : '#047857', whiteSpace: 'nowrap' }}>
-                      {isSelected ? 'Viewing' : 'View report'}
-                    </span>
-                  </button>
+
+                    {isExpanded && (
+                      <div id={detailsId} style={{ padding: '1rem 1.25rem 1.25rem', borderTop: '1px solid #FED7AA' }}>
+                        {parsed?.reportData ? (
+                          <ReportDashboard
+                            reportData={parsed.reportData}
+                            trendData={parsed.trendData}
+                            selectedInitiative={initiative}
+                            userRole={userRole}
+                            reportDbId={report.id}
+                            preloadedInsights={parsed.aiInsights}
+                            showDataTable={false}
+                          />
+                        ) : (
+                          <p style={{ color: '#9CA3AF', textAlign: 'center', padding: '1.5rem', margin: 0 }}>
+                            This report has no viewable data.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
-
-            {parsed?.reportData ? (
-              <ReportDashboard
-                key={selectedReport.id}
-                reportData={parsed.reportData}
-                trendData={parsed.trendData}
-                selectedInitiative={initiative}
-                userRole={userRole}
-                reportDbId={selectedReport.id}
-                preloadedInsights={parsed.aiInsights}
-                showDataTable={false}
-              />
-            ) : (
-              <EmptyState title="Report data unavailable" body="This report has no viewable data. Try another report." />
-            )}
           </>
         )}
       </>
@@ -176,7 +204,7 @@ export default function InitiativeReportsView({ slug }) {
   }
 
   return (
-    <PageLayout title={title} requireAuth={false}>
+    <PageLayout title={title} requireAuth={false} publicShell>
       {content}
     </PageLayout>
   );

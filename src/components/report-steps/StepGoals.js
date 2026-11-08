@@ -22,7 +22,7 @@ export default function StepGoals({ reportConfig, onChange, goals, loading }) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
         <h2 style={{ fontSize: '1.15rem', fontWeight: 600, margin: 0 }}>
-          Select Goals to Include
+          Select Goals
         </h2>
         {goals.length > 0 && (
           <button type="button" className="btn-outline" onClick={toggleAll} style={{ padding: '5px 12px', fontSize: 12 }}>
@@ -31,10 +31,9 @@ export default function StepGoals({ reportConfig, onChange, goals, loading }) {
         )}
       </div>
       <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-        Selected goals appear in a &quot;Goals&quot; section of the report, scored as of when it is generated.
         {(reportConfig.questionSelections || []).length === 0
-          ? ' No survey questions are selected, so select at least one goal to continue.'
-          : ' Optional.'}
+          ? 'No survey questions are selected. Please select at least one goal to continue.'
+          : 'Select goals to be included in the report (optional).'}
       </p>
 
       {loading ? (

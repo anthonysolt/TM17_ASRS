@@ -18,7 +18,7 @@ export function queryReportGoals(db, initiativeId, goalIds = null) {
 
   const rows = db.prepare(`
     SELECT goal_id, goal_name, description, target_value, current_value, weight,
-           scoring_method, deadline, source_root_field_id, source_method
+           scoring_method, deadline, source_root_field_id, source_method, source_answer
     FROM initiative_goal
     WHERE initiative_id = ? ${idFilter}
     ORDER BY created_at ASC, goal_id ASC
@@ -26,7 +26,7 @@ export function queryReportGoals(db, initiativeId, goalIds = null) {
 
   return rows.map((row) => {
     const source = row.source_root_field_id != null && row.source_method
-      ? computeQuestionSourceValue(db, initiativeId, row.source_root_field_id, row.source_method)
+      ? computeQuestionSourceValue(db, initiativeId, row.source_root_field_id, row.source_method, row.source_answer)
       : null;
     const goal = {
       ...row,

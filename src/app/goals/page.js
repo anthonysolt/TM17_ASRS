@@ -6,85 +6,21 @@ import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import { getScoreColor } from '@/lib/score-utils';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
-import { ANALYSIS_METHODS } from '@/lib/analysis-methods';
 import {
   formatPercentage,
   getGoalAccentColor,
   getGoalProgress,
   isUnmetWeightedGoal,
 } from '@/lib/goals/goal-display';
-import { GoalRow, GoalStatusBadge } from '@/components/GoalsTable';
-
-/** Keep user-entered goal weights within the supported percentage range. */
-function clampWeight(value) {
-  if (value === '') return '';
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return value;
-  return String(Math.min(100, Math.max(0, numericValue)));
-}
-
-/** Prevent current values from going negative. */
-function clampCurrentValue(value) {
-  if (value === '') return '';
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return value;
-  return String(Math.max(0, numericValue));
-}
-
-/**
- * Optional survey-question source for a goal's current value. With a question
- * selected, the API computes current_value from that question's responses
- * using the chosen analysis method (same methods as report generation).
- */
-function QuestionSourceFields({ goal, questions, onChange }) {
-  const isSourced = Boolean(goal.source_root_field_id);
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 16 }}>
-      <div>
-        <label style={labelStyle}>Current Value Source</label>
-        <select
-          value={goal.source_root_field_id || ''}
-          onChange={(e) => onChange({
-            source_root_field_id: e.target.value,
-            source_method: e.target.value ? (goal.source_method || 'average') : '',
-          })}
-          style={{ ...inputStyle, cursor: 'pointer' }}
-        >
-          <option value="">Enter manually</option>
-          {questions.map((question) => (
-            <option key={question.id} value={question.id}>{question.label}</option>
-          ))}
-        </select>
-        {questions.length === 0 && (
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
-            This initiative has no survey questions yet.
-          </div>
-        )}
-      </div>
-      <div>
-        <label style={labelStyle}>Analysis Method</label>
-        <select
-          value={goal.source_method || ''}
-          disabled={!isSourced}
-          onChange={(e) => onChange({ source_method: e.target.value })}
-          style={{ ...inputStyle, cursor: isSourced ? 'pointer' : 'default', opacity: isSourced ? 1 : 0.6 }}
-        >
-          {!isSourced && <option value="">—</option>}
-          {ANALYSIS_METHODS.map((method) => (
-            <option key={method.value} value={method.value}>{method.label}</option>
-          ))}
-        </select>
-      </div>
-    </div>
-  );
-}
-
-/** Convert form source fields into the API payload (null for manual goals). */
-function toSourcePayload(goal) {
-  return goal.source_root_field_id
-    ? { source_root_field_id: Number(goal.source_root_field_id), source_method: goal.source_method }
-    : { source_root_field_id: null, source_method: null };
-}
+import GoalsTable, {
+  GoalStatusBadge,
+  QuestionSourceFields,
+  clampCurrentValue,
+  clampWeight,
+  inputStyle,
+  labelStyle,
+  toSourcePayload,
+} from '@/components/GoalsTable';
 
 export default function GoalsPage() {
   // ---------------------------------------------------------------------------
@@ -105,7 +41,6 @@ export default function GoalsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingGoalId, setEditingGoalId] = useState(null);
   const [message, setMessage] = useState('');
 
   // Form values are stored as strings so number fields can temporarily be empty.
@@ -119,11 +54,9 @@ export default function GoalsPage() {
     deadline: '',
     source_root_field_id: '',
     source_method: '',
+    source_answer: '',
   });
 
-  // The edit timestamp supports optimistic concurrency conflict detection (US-035).
-  const [editGoal, setEditGoal] = useState({});
-  const [editBaselineUpdatedAt, setEditBaselineUpdatedAt] = useState('');
 
   // ---------------------------------------------------------------------------
   // Authorization and data loading
@@ -132,7 +65,7 @@ export default function GoalsPage() {
   // Only staff and administrators may manage initiative goals.
   useEffect(() => {
     if (user && user.user_type !== 'admin' && user.user_type !== 'staff') {
-      router.push('/');
+      router.push('/dashboard');
     }
   }, [user, router]);
 
@@ -146,16 +79,24 @@ export default function GoalsPage() {
       }
       if (!res.ok) throw new Error('Failed to fetch initiatives');
       const data = await res.json();
-      setInitiatives(data.initiatives || []);
+      const list = data.initiatives || [];
+      setInitiatives(list);
+      // ?initiative=<id> (e.g. from an initiative's Goals tab) opens that initiative's goals.
+      const requested = new URLSearchParams(window.location.search).get('initiative');
+      if (requested && list.some((i) => String(i.id ?? i.initiative_id) === requested)) {
+        setSelectedInitiative(requested);
+      }
     } catch (err) {
       console.error(err);
       setError('Failed to load initiatives');
     }
   }, [router]);
 
-  const fetchGoals = useCallback(async (initiativeId) => {
+  // background: refresh without the loading state, so the goal table stays
+  // mounted and keeps any open Edit drop-downs (used after saves and deletes).
+  const fetchGoals = useCallback(async (initiativeId, { background = false } = {}) => {
     try {
-      setIsLoading(true);
+      if (!background) setIsLoading(true);
       setError(null);
       const res = await apiFetch(`/api/goals?initiativeId=${initiativeId}`);
       if (res.status === 401 || res.status === 403) {
@@ -167,11 +108,12 @@ export default function GoalsPage() {
       const data = await res.json();
       setGoals(data.goals || []);
       setOverallScore(data.overallScore || 0);
+      return data.goals || [];
     } catch (err) {
       console.error(err);
       setError('Failed to load goals');
     } finally {
-      setIsLoading(false);
+      if (!background) setIsLoading(false);
     }
   }, [router]);
 
@@ -236,93 +178,12 @@ export default function GoalsPage() {
         deadline: '',
         source_root_field_id: '',
         source_method: '',
+        source_answer: '',
       });
-      fetchGoals(selectedInitiative);
+      fetchGoals(selectedInitiative, { background: true });
     } catch (err) {
       setMessage(err.message);
     }
-  }
-
-  /**
-   * Save edits using the timestamp captured when editing began. Weight changes
-   * are proportionally rebalanced across peer goals by the API.
-   */
-  async function handleUpdateGoal(goalId) {
-    setMessage('');
-
-    try {
-      const res = await apiFetch('/api/goals', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goal_id: goalId,
-          expected_updated_at: editBaselineUpdatedAt,
-          goal_name: editGoal.goal_name,
-          description: editGoal.description,
-          target_value: parseFloat(editGoal.target_value),
-          current_value: parseFloat(editGoal.current_value),
-          weight: parseFloat(editGoal.weight),
-          scoring_method: editGoal.scoring_method,
-          deadline: editGoal.deadline || null,
-          ...toSourcePayload(editGoal),
-        }),
-      });
-
-      const data = await res.json();
-      if (res.status === 409 && data.conflict) {
-        setMessage(
-          data.error ||
-            'Another user saved this goal first. Your edit was queued for an admin to review. The list below shows the current server copy—refresh after an admin resolves the conflict.'
-        );
-        setEditingGoalId(null);
-        fetchGoals(selectedInitiative);
-        return;
-      }
-      if (!res.ok) throw new Error(data.error || 'Failed to update goal');
-
-      setMessage('Goal updated successfully!');
-      setEditingGoalId(null);
-      fetchGoals(selectedInitiative);
-    } catch (err) {
-      setMessage(err.message);
-    }
-  }
-
-  /** Delete a goal after explicit confirmation, then refresh aggregate scores. */
-  async function handleDeleteGoal(goalId) {
-    if (!confirm('Are you sure you want to delete this goal?')) return;
-    setMessage('');
-
-    try {
-      const res = await apiFetch(`/api/goals?goalId=${goalId}`, {
-        method: 'DELETE',
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to delete goal');
-
-      setMessage('Goal deleted.');
-      fetchGoals(selectedInitiative);
-    } catch (err) {
-      setMessage(err.message);
-    }
-  }
-
-  /** Copy a persisted goal into the controlled edit form. */
-  function startEditing(goal) {
-    setEditingGoalId(goal.goal_id);
-    setEditBaselineUpdatedAt(goal.updated_at != null ? String(goal.updated_at) : '');
-    setEditGoal({
-      goal_name: goal.goal_name,
-      description: goal.description || '',
-      target_value: goal.target_value,
-      current_value: goal.current_value,
-      weight: goal.weight,
-      scoring_method: goal.scoring_method,
-      deadline: goal.deadline || '',
-      source_root_field_id: goal.source_root_field_id ? String(goal.source_root_field_id) : '',
-      source_method: goal.source_method || '',
-    });
   }
 
   // ---------------------------------------------------------------------------
@@ -421,19 +282,12 @@ export default function GoalsPage() {
         )}
       </div>
 
-      {/* Manage Goals header */}
+      {/* Goals header */}
       {selectedInitiative && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-          <button
-            onClick={() => { setSelectedInitiative(''); setGoals([]); setOverallScore(0); setShowAddForm(false); }}
-            className="btn-outline"
-            style={{ padding: '6px 12px', fontSize: 12 }}
-          >
-            ← Deselect
-          </button>
           <div style={{ flex: 1 }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: 0 }}>
-              Manage Goals: {initiatives.find(i => String(i.initiative_id) === selectedInitiative)?.initiative_name || 'Initiative'}
+              Goals: {initiatives.find(i => String(i.initiative_id) === selectedInitiative)?.initiative_name || 'Initiative'}
             </h2>
           </div>
 
@@ -447,10 +301,30 @@ export default function GoalsPage() {
           )}
 
           <button
+            type="button"
+            className="btn-outline btn-icon"
+            onClick={() => fetchGoals(selectedInitiative)}
+            disabled={isLoading}
+            aria-label="Refresh goals"
+            title="Refresh goals"
+          >
+            <svg
+              className={isLoading ? 'icon-spin' : undefined}
+              width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+          </button>
+
+          <button
             className="btn-primary"
             onClick={() => setShowAddForm(!showAddForm)}
           >
-            {showAddForm ? 'Cancel' : '+ Add Goal'}
+            {showAddForm ? 'Cancel' : 'Create Goal'}
           </button>
         </div>
       )}
@@ -593,7 +467,6 @@ export default function GoalsPage() {
                   style={{ ...inputStyle, cursor: 'pointer' }}
                 >
                   <option value="linear">Linear</option>
-                  <option value="threshold">Threshold</option>
                   <option value="binary">Binary</option>
                 </select>
               </div>
@@ -610,178 +483,23 @@ export default function GoalsPage() {
       {/* Goals content */}
       {selectedInitiative && !isLoading && goals.length === 0 && !showAddForm && (
         <div className="card" style={{ textAlign: 'center', color: 'var(--color-text-secondary)', padding: 48, fontSize: 14 }}>
-          No goals configured for this initiative yet. Click &quot;+ Add Goal&quot; to create one.
+          No goals configured for this initiative yet. Click &quot;Create Goal&quot; to add one.
         </div>
       )}
 
       {selectedInitiative && !isLoading && goals.length > 0 && (
         <>
-          {/* Scoring Criteria card */}
-          <div className="card goal-list-section" style={{ marginBottom: 24 }}>
-            <div className="card-header">
-              <div>
-                <div className="card-title">Scoring Criteria</div>
-                <div className="goal-list-subtitle">Each goal contributes independently to the initiative score.</div>
-              </div>
-              <span className="goal-list-count">{goals.length} {goals.length === 1 ? 'goal' : 'goals'}</span>
-            </div>
-            <table className="data-table goal-list-table">
-              <thead>
-                <tr>
-                  <th>Goal</th>
-                  <th>Weight (%)</th>
-                  <th>Target Value</th>
-                  <th>Current Value</th>
-                  <th>Goal Progress</th>
-                  <th>Status</th>
-                  <th style={{ width: 120 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {goals.map((goal) =>
-                  editingGoalId === goal.goal_id ? (
-                    /* ---- Edit Mode Row ---- */
-                    <tr key={goal.goal_id} className="goal-list-row goal-list-row-editing">
-                      <td colSpan={7} style={{ padding: 0 }}>
-                        <div style={{ padding: '20px 16px', background: '#FAFAFA', borderRadius: 8 }}>
-                          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12, color: 'var(--color-text-primary)' }}>
-                            Editing: {goal.goal_name}
-                          </div>
-                          <div style={{ marginBottom: 12 }}>
-                            <label style={labelStyle}>Goal Name</label>
-                            <input
-                              type="text"
-                              value={editGoal.goal_name}
-                              onChange={(e) => setEditGoal({ ...editGoal, goal_name: e.target.value })}
-                              style={inputStyle}
-                            />
-                          </div>
-                          <div style={{ marginBottom: 12 }}>
-                            <label style={labelStyle}>Description</label>
-                            <textarea
-                              value={editGoal.description}
-                              onChange={(e) => setEditGoal({ ...editGoal, description: e.target.value })}
-                              rows={2}
-                              style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }}
-                            />
-                          </div>
-                          <div style={{ marginBottom: 12 }}>
-                            <label style={labelStyle}>Deadline (Optional)</label>
-                            <input
-                              type="date"
-                              value={editGoal.deadline}
-                              onChange={(e) => setEditGoal({ ...editGoal, deadline: e.target.value })}
-                              style={inputStyle}
-                            />
-                          </div>
-                          <QuestionSourceFields
-                            goal={editGoal}
-                            questions={questions}
-                            onChange={(changes) => setEditGoal({ ...editGoal, ...changes })}
-                          />
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-                            <div>
-                              <label style={labelStyle}>Target Value</label>
-                              <input
-                                type="number"
-                                step="any"
-                                value={editGoal.target_value}
-                                onChange={(e) => setEditGoal({ ...editGoal, target_value: e.target.value })}
-                                style={inputStyle}
-                              />
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Current Value</label>
-                              <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                value={editGoal.source_root_field_id ? '' : editGoal.current_value}
-                                disabled={Boolean(editGoal.source_root_field_id)}
-                                onChange={(e) => setEditGoal({ ...editGoal, current_value: clampCurrentValue(e.target.value) })}
-                                placeholder={editGoal.source_root_field_id ? 'From responses' : undefined}
-                                style={{ ...inputStyle, opacity: editGoal.source_root_field_id ? 0.6 : 1 }}
-                              />
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Weight (%)</label>
-                              <input
-                                type="number"
-                                step="1"
-                                min="0"
-                                max="100"
-                                value={editGoal.weight}
-                                onChange={(e) => setEditGoal({ ...editGoal, weight: clampWeight(e.target.value) })}
-                                style={inputStyle}
-                              />
-                            </div>
-                            <div>
-                              <label style={labelStyle}>Scoring Method</label>
-                              <select
-                                value={editGoal.scoring_method}
-                                onChange={(e) => setEditGoal({ ...editGoal, scoring_method: e.target.value })}
-                                style={{ ...inputStyle, cursor: 'pointer' }}
-                              >
-                                <option value="linear">Linear</option>
-                                <option value="threshold">Threshold</option>
-                                <option value="binary">Binary</option>
-                              </select>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <button
-                              onClick={() => handleUpdateGoal(goal.goal_id)}
-                              className="btn-primary"
-                            >
-                              Save Changes
-                            </button>
-                            <button
-                              onClick={() => setEditingGoalId(null)}
-                              className="btn-outline"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    /* ---- Display Mode Row ---- */
-                    <GoalRow key={goal.goal_id} goal={goal}>
-                      <td>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            onClick={() => startEditing(goal)}
-                            className="btn-outline"
-                            style={{ padding: '5px 12px', fontSize: 12 }}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteGoal(goal.goal_id)}
-                            style={{
-                              padding: '5px 12px',
-                              fontSize: 12,
-                              borderRadius: 8,
-                              border: '1px solid #FECACA',
-                              backgroundColor: '#FEF2F2',
-                              color: '#DC2626',
-                              cursor: 'pointer',
-                              transition: 'background 150ms ease',
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#FEE2E2'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#FEF2F2'; }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </GoalRow>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
+          {/* Scoring Criteria card: goal list with Edit drop-downs (shared GoalsTable) */}
+          <GoalsTable
+            key={selectedInitiative}
+            goals={goals}
+            title="Scoring Criteria"
+            editable
+            questions={questions}
+            onGoalsChanged={() => fetchGoals(selectedInitiative, { background: true })}
+            onMessage={setMessage}
+            style={{ marginBottom: 24 }}
+          />
 
           {/* Target Metrics card */}
           <div className="card" style={{ marginBottom: 24 }}>
@@ -872,16 +590,6 @@ export default function GoalsPage() {
               ))}
             </div>
           </div>
-
-          {/* Save Changes button */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              className="btn-primary"
-              onClick={() => fetchGoals(selectedInitiative)}
-            >
-              Refresh Data
-            </button>
-          </div>
         </>
       )}
     </PageLayout>
@@ -889,25 +597,4 @@ export default function GoalsPage() {
 }
 
 // Shared styles keep create and edit controls visually consistent.
-const labelStyle = {
-  display: 'block',
-  color: 'var(--color-text-primary)',
-  marginBottom: '0.35rem',
-  fontWeight: '600',
-  fontSize: '0.8rem',
-  textTransform: 'uppercase',
-  letterSpacing: '0.5px',
-};
 
-const inputStyle = {
-  width: '100%',
-  padding: '8px 12px',
-  border: '1.5px solid #E5E7EB',
-  borderRadius: 8,
-  fontSize: 13,
-  color: 'var(--color-text-primary)',
-  backgroundColor: '#fff',
-  outline: 'none',
-  boxSizing: 'border-box',
-  transition: 'border-color 150ms ease',
-};

@@ -72,19 +72,70 @@ export function toPostgres(sql) {
   return text;
 }
 
+const RESPONSE_BUFFER_BYTES = 8 * 1024 * 1024;
+const DEFAULT_TIMEOUT_MS = Number(process.env.PG_SYNC_TIMEOUT_MS) || 30000;
+
+/**
+ * Synchronous PostgreSQL client: each query is posted to a worker thread that
+ * owns the pg connection, and the calling thread blocks (Atomics.wait) until
+ * the worker writes the JSON response into a shared buffer.
+ *
+ * The wait has a timeout so a stuck or crashed worker can't hang the server
+ * forever; a worker that timed out or exited is replaced on the next query,
+ * with a fresh buffer so a late reply can't be read as another query's answer.
+ *
+ * options: { workerPath, timeoutMs } (tests point workerPath at a stub worker).
+ */
 export class PostgresSyncDatabase {
-  constructor(connectionString = process.env.DATABASE_URL) {
+  constructor(connectionString = process.env.DATABASE_URL, options = {}) {
     if (!connectionString) throw new Error('DATABASE_URL must be set to use PostgreSQL.');
-    this.buffer = new SharedArrayBuffer(8 * 1024 * 1024 + 8);
+    this.connectionString = connectionString;
+    this.workerPath = options.workerPath || path.join(process.cwd(), 'scripts', 'postgres-sync-worker.cjs');
+    this.timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
+    this.worker = null;
+    this.spawnWorker();
+  }
+
+  spawnWorker() {
+    this.buffer = new SharedArrayBuffer(RESPONSE_BUFFER_BYTES + 8);
     this.signal = new Int32Array(this.buffer, 0, 2);
     this.bytes = new Uint8Array(this.buffer, 8);
-    this.worker = new Worker(path.join(process.cwd(), 'scripts', 'postgres-sync-worker.cjs'), { workerData: { connectionString, responseBuffer: this.buffer } });
-    this.worker.unref();
+    const worker = new Worker(this.workerPath, {
+      workerData: { connectionString: this.connectionString, responseBuffer: this.buffer },
+    });
+    worker.unref();
+    // Runs whenever the event loop gets a turn; the next query then starts a new worker.
+    worker.on('error', (error) => {
+      console.error('[postgres-sync] database worker failed:', error?.message || error);
+      if (this.worker === worker) this.worker = null;
+    });
+    worker.on('exit', (code) => {
+      if (this.worker === worker) {
+        if (code !== 0) console.error(`[postgres-sync] database worker exited with code ${code}`);
+        this.worker = null;
+      }
+    });
+    this.worker = worker;
   }
+
+  discardWorker() {
+    const worker = this.worker;
+    this.worker = null;
+    if (worker) worker.terminate().catch(() => {});
+  }
+
   query(sql, values = []) {
+    if (!this.worker) this.spawnWorker();
     Atomics.store(this.signal, 0, 0); Atomics.store(this.signal, 1, 0);
     this.worker.postMessage({ text: toPostgres(sql), values });
-    Atomics.wait(this.signal, 0, 0);
+    const outcome = Atomics.wait(this.signal, 0, 0, this.timeoutMs);
+    if (outcome === 'timed-out') {
+      // The worker may still answer later into this buffer, so replace both.
+      this.discardWorker();
+      const error = new Error(`Database query timed out after ${this.timeoutMs} ms`);
+      error.code = 'QUERY_TIMEOUT';
+      throw error;
+    }
     const payload = JSON.parse(Buffer.from(this.bytes.subarray(0, Atomics.load(this.signal, 1))).toString());
     if (!payload.ok) { const error = new Error(payload.error.message); error.code = payload.error.code; throw error; }
     return payload;

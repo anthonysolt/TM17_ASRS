@@ -269,7 +269,7 @@ export default function AdminImportPage() {
     setIsMounted(true);
     if (!hydrated) return;
     if (!user) { router.push('/login'); return; }
-    if (user.user_type !== 'admin') { router.push('/'); }
+    if (user.user_type !== 'admin') { router.push('/dashboard'); }
   }, [router, user, hydrated]);
 
   const [tables, setTables] = useState([]);

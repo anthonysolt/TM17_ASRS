@@ -17,14 +17,16 @@ function ensureStringifiedJson(value, fallback = '{}') {
   }
 }
 
+/**
+ * A report as listed (GET /api/reports): its details without the saved snapshot.
+ * Lists stay small however many reports or responses there are; the snapshot
+ * is loaded with GET /api/reports/[id] when a report is viewed or downloaded.
+ */
 export function toReportListItemDto(row) {
   if (!row) return null;
 
-  const snapshot = safeParseJson(row.report_data, null);
-
   return {
     id: Number(row.id),
-    survey_id: row.survey_id == null ? null : Number(row.survey_id),
     initiative_id: row.initiative_id == null ? null : Number(row.initiative_id),
     initiative_name: row.initiative_name || null,
     name: row.name || '',
@@ -33,8 +35,7 @@ export function toReportListItemDto(row) {
     created_by: row.created_by || '',
     display_order: Number(row.display_order || 0),
     created_at: row.created_at || null,
-    report_data: ensureStringifiedJson(row.report_data, '{}'),
-    report_snapshot: snapshot,
+    published_at: row.published_at || null,
   };
 }
 
@@ -53,6 +54,13 @@ export function toReportCreateInput(body = {}) {
   };
 }
 
+/** One report with its saved snapshot (GET /api/reports/[id], PUT responses). */
 export function toReportDetailDto(row) {
-  return toReportListItemDto(row);
+  if (!row) return null;
+
+  return {
+    ...toReportListItemDto(row),
+    report_data: ensureStringifiedJson(row.report_data, '{}'),
+    report_snapshot: safeParseJson(row.report_data, null),
+  };
 }

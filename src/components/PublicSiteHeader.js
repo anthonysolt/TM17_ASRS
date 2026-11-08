@@ -2,14 +2,18 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAuthStore } from '@/lib/auth/use-auth-store';
 
 /**
- * Shared top bar for logged-out visitors (home + public pages like /reporting).
- * Matches homepage: brand left, optional page title, Home + Log in on the right.
+ * Shared top bar for the public pages (home + pages like /reporting).
+ * Brand left, optional page title, then Home and either Log in or, for a
+ * logged-in user viewing the public site, Dashboard.
  */
 export default function PublicSiteHeader({ pageTitle = null }) {
   const pathname = usePathname();
+  const { user, hydrated } = useAuthStore();
   const showHome = pathname !== '/';
+  const isLoggedIn = hydrated && Boolean(user);
 
   return (
     <header className="public-site-header">
@@ -31,9 +35,15 @@ export default function PublicSiteHeader({ pageTitle = null }) {
             Home
           </Link>
         ) : null}
-        <Link href="/login" className="btn-outline public-site-header-login">
-          Log in
-        </Link>
+        {isLoggedIn ? (
+          <Link href="/dashboard" className="btn-outline public-site-header-login">
+            Dashboard
+          </Link>
+        ) : (
+          <Link href="/login" className="btn-outline public-site-header-login">
+            Log in
+          </Link>
+        )}
       </div>
     </header>
   );

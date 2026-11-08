@@ -5,7 +5,7 @@
  * (both carry goal_name, weight, target_value, current_value, scoring_method, score).
  */
 import { getScoreColor } from '@/lib/score-utils';
-import { getAnalysisMethodLabel } from '@/lib/analysis-methods';
+import { getGoalSourceMethodLabel, methodNeedsAnswer } from '@/lib/analysis-methods';
 
 /** Calculate raw progress toward a goal independently of its scoring method. */
 export function getGoalProgress(goal) {
@@ -55,7 +55,8 @@ export function getGoalAccentColor(goal) {
 /** "Question · Method" for question-sourced goals, '' for manual goals. */
 export function getGoalSourceLabel(goal) {
   if (!goal.source_root_field_id) return '';
-  return `${goal.source?.questionLabel || 'Survey question'} · ${getAnalysisMethodLabel(goal.source_method)}`;
+  const answer = methodNeedsAnswer(goal.source_method) && goal.source_answer ? ` "${goal.source_answer}"` : '';
+  return `${goal.source?.questionLabel || 'Survey question'} · ${getGoalSourceMethodLabel(goal.source_method)}${answer}`;
 }
 
 // ---------------------------------------------------------------------------

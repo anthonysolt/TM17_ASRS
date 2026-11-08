@@ -44,7 +44,7 @@ function NotificationIcon({ type }) {
   );
 }
 
-export default function TopBar({ title }) {
+export default function TopBar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -139,16 +139,19 @@ export default function TopBar({ title }) {
         </svg>
       </button>
 
-      <div className="topbar-title">{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginLeft: 'auto' }}>
+        {/* The public initiatives/reports page, open to everyone at all times. */}
+        <Link
+          href="/"
+          title="Public Site"
+          aria-label="Public Site"
+          style={{ display: 'flex', alignItems: 'center', color: '#6B7280', textDecoration: 'none' }}
+        >
+          <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+            <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+          </svg>
+        </Link>
 
-      <div className="topbar-search">
-        <svg style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', width: 16, height: 16, color: '#9CA3AF' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-        </svg>
-        <input type="text" placeholder="Search initiatives, reports..." />
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <div style={{ position: 'relative' }} ref={bellRef}>
           <div
             style={{ position: 'relative', cursor: 'pointer', color: '#6B7280', display: 'flex' }}

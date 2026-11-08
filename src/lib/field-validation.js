@@ -14,7 +14,7 @@ export function validateFieldValue(value, field, rules) {
   const typeError = validateType(value, field);
   if (typeError) return typeError;
   const { field_type } = field;
-  if (field_type === 'text' || field_type === 'yesno') {
+  if (field_type === 'text') {
     const str = typeof value === 'string' ? value : String(value ?? '');
     if (rules.minLength != null && str.length < rules.minLength) {
       return `Must be at least ${rules.minLength} characters`;
@@ -73,7 +73,7 @@ function validateType(value, field) {
     }
     return 'Please enter a valid date';
   }
-  if (['select', 'choice', 'radio'].includes(field_type) && Array.isArray(field.options)) {
+  if (['select', 'choice', 'radio', 'yesno'].includes(field_type) && Array.isArray(field.options)) {
     if (!field.options.includes(value)) {
       return 'Please select a valid option';
     }

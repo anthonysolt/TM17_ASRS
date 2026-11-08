@@ -38,7 +38,7 @@ export default function LoginPage() {
         setUser(data.user);
         setMessage(`Login successful! Welcome ${data.user.first_name}!`);
         setTimeout(() => {
-          router.push('/');
+          router.push('/dashboard');
         }, 1000);
       } else {
         setMessage(data.error || 'Login failed');

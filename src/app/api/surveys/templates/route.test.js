@@ -153,6 +153,79 @@ describe('/api/surveys/templates integration', () => {
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM form_questions WHERE field_id = ?').get(fieldId).c).toBe(2);
   });
 
+  test.each([
+    [false, 0],
+    [true, 1],
+  ])('POST saves an edited core question as a new field, core only when re-ticked (%s)', async (retick, expectedCore) => {
+    process.env.NODE_ENV = 'development';
+    const tokens = createSessionForRank(state.db, { rank: 100 });
+    const fieldId = Number(state.db.prepare(
+      'INSERT INTO field (field_key, field_label, field_type, scope, is_core_question, validation_rules) VALUES (?, ?, ?, ?, 1, ?)'
+    ).run('saved_choice', 'Saved choice', 'text', 'common', JSON.stringify({ ui_type: 'choice' })).lastInsertRowid);
+    state.db.prepare(
+      'INSERT INTO field_options (field_id, option_value, display_label, display_order) VALUES (?, ?, ?, 0), (?, ?, ?, 1)'
+    ).run(fieldId, 'yes', 'Yes', fieldId, 'no', 'No');
+
+    const response = await POST(new Request('http://localhost:3000/api/surveys/templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthedRequestHeaders(tokens, { csrf: true }),
+      },
+      body: JSON.stringify({
+        title: 'Edited form',
+        initiative_id: 1,
+        questions: [{
+          field_id: fieldId, question: 'Edited choice', type: 'choice', options: ['yes', 'no', 'maybe'],
+          is_core_question: retick,
+        }],
+      }),
+    }));
+    expect(response.status).toBe(201);
+
+    const original = state.db.prepare('SELECT field_label, is_core_question FROM field WHERE field_id = ?').get(fieldId);
+    expect(original).toEqual({ field_label: 'Saved choice', is_core_question: 1 });
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM field_options WHERE field_id = ?').get(fieldId).c).toBe(2);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM form_questions WHERE field_id = ?').get(fieldId).c).toBe(0);
+
+    const copy = state.db.prepare("SELECT field_id, is_core_question FROM field WHERE field_label = 'Edited choice'").get();
+    expect(copy.is_core_question).toBe(expectedCore);
+    expect(state.db.prepare(
+      'SELECT display_label FROM field_options WHERE field_id = ? ORDER BY display_order'
+    ).all(copy.field_id).map(row => row.display_label)).toEqual(['yes', 'no', 'maybe']);
+  });
+
+  test('POST stores a Yes/No question with Yes, No and N/A options', async () => {
+    process.env.NODE_ENV = 'development';
+    const tokens = createSessionForRank(state.db, { rank: 100 });
+
+    const response = await POST(new Request('http://localhost:3000/api/surveys/templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...createAuthedRequestHeaders(tokens, { csrf: true }),
+      },
+      body: JSON.stringify({
+        title: 'Yes/No form',
+        initiative_id: 1,
+        // Options sent by a client are ignored; Yes/No always gets the fixed set.
+        questions: [{ question: 'Did you attend?', type: 'yesno', options: ['Maybe'] }],
+      }),
+    }));
+    expect(response.status).toBe(201);
+
+    const field = state.db.prepare("SELECT field_id, field_type, validation_rules FROM field WHERE field_label = 'Did you attend?'").get();
+    expect(field.field_type).toBe('yesno');
+    expect(field.validation_rules).toBeNull();
+    expect(state.db.prepare(
+      'SELECT option_value, display_label FROM field_options WHERE field_id = ? ORDER BY display_order'
+    ).all(field.field_id)).toEqual([
+      { option_value: 'Yes', display_label: 'Yes' },
+      { option_value: 'No', display_label: 'No' },
+      { option_value: 'N/A', display_label: 'N/A' },
+    ]);
+  });
+
   test('POST stores Likert labels with numeric option values and a numeric field type', async () => {
     process.env.NODE_ENV = 'development';
     const tokens = createSessionForRank(state.db, { rank: 100 });
@@ -181,28 +254,37 @@ describe('/api/surveys/templates integration', () => {
     expect(state.db.prepare(
       'SELECT option_value, display_label FROM field_options WHERE field_id = ? ORDER BY display_order'
     ).all(field.field_id)).toEqual([
-      { option_value: '1', display_label: 'Strongly Disagree' },
-      { option_value: '2', display_label: 'Disagree' },
-      { option_value: '3', display_label: 'Some What Disagree' },
-      { option_value: '4', display_label: 'Neutral' },
-      { option_value: '5', display_label: 'Some What Agree' },
-      { option_value: '6', display_label: 'Agree' },
-      { option_value: '7', display_label: 'Strongly Agree' },
+      { option_value: '1', display_label: '1 - Strongly Disagree' },
+      { option_value: '2', display_label: '2 - Disagree' },
+      { option_value: '3', display_label: '3 - Some What Disagree' },
+      { option_value: '4', display_label: '4 - Neutral' },
+      { option_value: '5', display_label: '5 - Some What Agree' },
+      { option_value: '6', display_label: '6 - Agree' },
+      { option_value: '7', display_label: '7 - Strongly Agree' },
     ]);
   });
 
-  test('DELETE template removes template and related submissions/reports', async () => {
+  test('DELETE template removes the template and its responses', async () => {
+    const initiativeId = Number(state.db.prepare(
+      "INSERT INTO initiative (initiative_name, attributes, questions, settings) VALUES ('Delete Init', '[]', '[]', '{}')"
+    ).run().lastInsertRowid);
     const formId = Number(state.db.prepare(
-      'INSERT INTO form (initiative_id, form_name, description, is_published) VALUES (1, ?, ?, 1)'
-    ).run('Delete Template', 'template to delete').lastInsertRowid);
+      'INSERT INTO form (initiative_id, form_name, description, is_published) VALUES (?, ?, ?, 1)'
+    ).run(initiativeId, 'Delete Template', 'template to delete').lastInsertRowid);
+    const fieldId = Number(state.db.prepare(
+      "INSERT INTO field (field_key, field_label, field_type, scope) VALUES ('del_q', 'Question', 'text', 'common')"
+    ).run().lastInsertRowid);
+    const formQuestionId = Number(state.db.prepare(
+      'INSERT INTO form_questions (form_id, field_id, root_field_id) VALUES (?, ?, ?)'
+    ).run(formId, fieldId, fieldId).lastInsertRowid);
 
-    // insert a survey submission linked to template via responses.templateId
-    const responseObj = JSON.stringify({ templateId: formId, templateTitle: 'Delete Template', q1: 'yes' });
-    const surveyId = Number(state.db.prepare(
-      'INSERT INTO surveys (name, email, responses, submitted_at) VALUES (?, ?, ?, ?)' 
-    ).run('User X', 'x@example.com', responseObj, '2026-03-24T00:00:00.000Z').lastInsertRowid);
-
-    state.db.prepare('INSERT INTO reports (survey_id, report_data, created_at) VALUES (?, ?, ?)').run(surveyId, JSON.stringify({ summary: 'x' }), '2026-03-24T00:00:00.000Z');
+    // A response to the template, stored in submission / submission_value.
+    const submissionId = Number(state.db.prepare(
+      'INSERT INTO submission (initiative_id, form_id) VALUES (?, ?)'
+    ).run(initiativeId, formId).lastInsertRowid);
+    state.db.prepare(
+      "INSERT INTO submission_value (submission_id, form_question_id, value_text) VALUES (?, ?, 'yes')"
+    ).run(submissionId, formQuestionId);
 
     const res = await DELETE(new Request(`http://localhost:3000/api/surveys/templates?templateId=${formId}`, { method: 'DELETE' }));
     const body = await res.json();
@@ -210,8 +292,8 @@ describe('/api/surveys/templates integration', () => {
     expect(body.success).toBe(true);
 
     expect(state.db.prepare('SELECT COUNT(*) AS c FROM form WHERE form_id = ?').get(formId).c).toBe(0);
-    expect(state.db.prepare('SELECT COUNT(*) AS c FROM surveys WHERE id = ?').get(surveyId).c).toBe(0);
-    expect(state.db.prepare('SELECT COUNT(*) AS c FROM reports WHERE survey_id = ?').get(surveyId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM submission WHERE form_id = ?').get(formId).c).toBe(0);
+    expect(state.db.prepare('SELECT COUNT(*) AS c FROM submission_value WHERE submission_id = ?').get(submissionId).c).toBe(0);
   });
 
   test('DELETE template removes its own fields and options but keeps core and initiative fields', async () => {

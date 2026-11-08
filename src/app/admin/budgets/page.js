@@ -41,7 +41,7 @@ export default function AdminBudgetsPage() {
       return;
     }
     if (user.user_type !== 'admin') {
-      router.push('/');
+      router.push('/dashboard');
       return;
     }
   }, [router, user, hydrated]);
@@ -272,6 +272,11 @@ export default function AdminBudgetsPage() {
 
   return (
     <PageLayout title="Budget Management">
+      {/* ── Page header (same layout as the Reports / Surveys pages) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 }}>Budget Management</h2>
+      </div>
+
       {/* Stats Row */}
       <div className="stats-row" style={{ marginBottom: '1.5rem' }}>
         <div className="stat-card">
@@ -397,7 +402,15 @@ export default function AdminBudgetsPage() {
               </label>
             </div>
 
-            <div style={{ marginTop: '1.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+            {/* Form actions sit in the card's bottom-right corner. */}
+            <div style={{ marginTop: '1.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={clearForm}
+                className="btn-outline"
+              >
+                Clear Form
+              </button>
               <button
                 type="submit"
                 className="btn-primary"
@@ -405,13 +418,6 @@ export default function AdminBudgetsPage() {
                 style={{ opacity: saving ? 0.6 : 1 }}
               >
                 {saving ? 'Saving...' : selectedBudgetId ? 'Update Budget' : 'Create Budget'}
-              </button>
-              <button
-                type="button"
-                onClick={clearForm}
-                className="btn-outline"
-              >
-                Clear Form
               </button>
             </div>
           </form>

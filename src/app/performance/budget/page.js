@@ -190,7 +190,7 @@ export default function PerformanceBudget() {
     const stored = localStorage.getItem('user');
     if (!stored) { router.push('/login'); return; }
     const parsed = JSON.parse(stored);
-    if (parsed.user_type !== 'admin' && parsed.user_type !== 'staff') { router.push('/'); return; }
+    if (parsed.user_type !== 'admin' && parsed.user_type !== 'staff') { router.push('/dashboard'); return; }
     setUser(parsed);
   }, [router]);
 

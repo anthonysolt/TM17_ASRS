@@ -160,13 +160,15 @@ export function computeMetrics(filteredData, unfilteredData, attributes) {
     if (!matchingKey) return;
 
     // Determine if this attribute is numeric by checking the first non-null value
-    const sampleValues = filteredData
-      .map(row => row[matchingKey])
+    const cells = filteredData.map(row => row[matchingKey]);
+    const sampleValues = cells
+      .flatMap(answerList)
       .filter(v => v !== undefined && v !== null);
 
     if (sampleValues.length === 0) return;
 
-    const isNumeric = sampleValues.every(v => !isNaN(Number(v)));
+    // Checkbox answers are always categories, even when an option looks numeric.
+    const isNumeric = !cells.some(Array.isArray) && sampleValues.every(v => !isNaN(Number(v)));
 
     if (isNumeric) {
       const nums = sampleValues.map(Number);
@@ -186,14 +188,147 @@ export function computeMetrics(filteredData, unfilteredData, attributes) {
 }
 
 /**
+ * answerList — The individual answers in one cell. Checkbox questions store
+ * every ticked option as an array; other questions hold a single value.
+ */
+export function answerList(value) {
+  return Array.isArray(value) ? value : [value];
+}
+
+function isFiniteBound(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * isQuestionFilterActive — A question filter is either an answer checklist
+ * ({ values: [...] }) or a numeric range ({ min?, max? }).
+ */
+export function isQuestionFilterActive(filter) {
+  if (!filter || typeof filter !== 'object') return false;
+  if (Array.isArray(filter.values)) return filter.values.length > 0;
+  return isFiniteBound(filter.min) || isFiniteBound(filter.max);
+}
+
+/**
+ * matchesQuestionFilter — Tests one answer against a question filter.
+ * Blank answers never match an active filter.
+ */
+export function matchesQuestionFilter(value, filter) {
+  if (!isQuestionFilterActive(filter)) return true;
+  // A checkbox answer matches when any of its ticked options matches.
+  if (Array.isArray(value)) return value.some((option) => matchesQuestionFilter(option, filter));
+  if (value === null || value === undefined || String(value).trim() === '') return false;
+
+  if (Array.isArray(filter.values)) {
+    const answer = String(value).trim().toLowerCase();
+    return filter.values.some((allowed) => String(allowed).trim().toLowerCase() === answer);
+  }
+
+  const num = toNumberIfPossible(value);
+  if (num === null) return false;
+  if (isFiniteBound(filter.min) && num < filter.min) return false;
+  if (isFiniteBound(filter.max) && num > filter.max) return false;
+  return true;
+}
+
+/**
+ * applyQuestionFilters — Keeps rows matching every whole-report question filter.
+ * analyses: [{ column, filter: { scope, values | min/max } }]
+ */
+export function applyQuestionFilters(rows, analyses = []) {
+  const active = analyses.filter((analysis) =>
+    analysis?.filter?.scope === 'report' && isQuestionFilterActive(analysis.filter)
+  );
+  if (active.length === 0) return [...rows];
+  return rows.filter((row) =>
+    active.every((analysis) => matchesQuestionFilter(row[analysis.column], analysis.filter))
+  );
+}
+
+/**
+ * rowsForAnalysis — Rows used for one question's analysis. A question-scoped
+ * filter only narrows that question; other questions keep every row.
+ */
+export function rowsForAnalysis(rows, analysis) {
+  if (analysis?.filter?.scope !== 'question' || !isQuestionFilterActive(analysis.filter)) return rows;
+  return rows.filter((row) => matchesQuestionFilter(row[analysis.column], analysis.filter));
+}
+
+const CATEGORICAL_CHART_TYPES = ['select', 'choice', 'multiselect', 'yesno', 'boolean'];
+const MAX_TEXT_CHART_VALUES = 15;
+const MAX_NUMBER_CHART_VALUES = 10;
+
+function countAnswers(rows, column, toName) {
+  const counts = new Map();
+  rows.forEach((row) => {
+    answerList(row[column]).forEach((answer) => {
+      const name = toName(answer);
+      if (name === null) return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+  });
+  return [...counts.entries()].map(([name, value]) => ({ name, value }));
+}
+
+function toTextAnswer(value) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function toIntegerAnswer(value) {
+  const num = toNumberIfPossible(value);
+  return num === null ? null : Math.round(num);
+}
+
+/**
+ * buildQuestionChartData — Answer distributions per question, keyed by label.
+ * analyses: [{ label, column, type, filter }]. Question-scoped filters apply
+ * to their own question only.
+ */
+export function buildQuestionChartData(rows, analyses = []) {
+  const chartData = {};
+  analyses.forEach((analysis) => {
+    const questionRows = rowsForAnalysis(rows, analysis);
+    const key = analysis.label || analysis.column;
+
+    if (CATEGORICAL_CHART_TYPES.includes(analysis.type)) {
+      const distribution = countAnswers(questionRows, analysis.column, toTextAnswer)
+        .sort((a, b) => b.value - a.value);
+      if (distribution.length > 0) chartData[key] = distribution;
+    } else if (analysis.type === 'rating') {
+      const distribution = countAnswers(questionRows, analysis.column, toIntegerAnswer)
+        .sort((a, b) => a.name - b.name);
+      if (distribution.length > 0) {
+        chartData[key] = distribution.map((d) => ({ name: `Rating ${d.name}`, value: d.value }));
+      }
+    } else if (analysis.type === 'text') {
+      const distribution = countAnswers(questionRows, analysis.column, toTextAnswer)
+        .sort((a, b) => b.value - a.value);
+      if (distribution.length > 1 && distribution.length <= MAX_TEXT_CHART_VALUES) {
+        chartData[key] = distribution;
+      }
+    } else if (analysis.type === 'number') {
+      const distribution = countAnswers(questionRows, analysis.column, toIntegerAnswer)
+        .sort((a, b) => a.name - b.name);
+      if (distribution.length > 1 && distribution.length <= MAX_NUMBER_CHART_VALUES) {
+        chartData[key] = distribution.map((d) => ({ name: String(d.name), value: d.value }));
+      }
+    }
+  });
+  return chartData;
+}
+
+/**
  * processReportData — Full pipeline: filter → expressions → sort → metrics.
+ * questionFilters: question analyses whose whole-report filters narrow rows
+ * alongside the equality filters.
  * Returns { filteredData, metrics }.
  */
-export function processReportData(tableData, filters, expressions, sortConfig, attributes) {
+export function processReportData(tableData, filters, expressions, sortConfig, attributes, questionFilters = []) {
   const unfilteredData = [...tableData];
 
-  // Step 1: Apply equality filters
+  // Step 1: Apply equality filters and whole-report question filters
   let data = applyFilters(tableData, filters);
+  data = applyQuestionFilters(data, questionFilters);
   const afterFilterCount = data.length;
 
   // Step 2: Apply boolean expressions
@@ -477,7 +612,7 @@ function computeAggregateAnalysis(rows, attributes, trendConfig, context) {
     }
 
     const counts = new Map();
-    values.forEach((value) => {
+    values.flatMap(answerList).forEach((value) => {
       if (value === null || value === undefined || String(value).trim() === '') return;
       const displayValue = String(value).trim();
       const normalizedValue = displayValue.toLowerCase();

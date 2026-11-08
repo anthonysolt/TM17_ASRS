@@ -1,6 +1,7 @@
 'use client';
 
 import PageLayout from '@/components/PageLayout';
+import SearchField, { DateFilter, FILTER_BAR_STYLE } from '@/components/ListFilters';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
@@ -172,7 +173,7 @@ export default function AdminAuditPage() {
   useEffect(() => {
     if (!hydrated) return;
     if (!user) { router.push('/login'); return; }
-    if (user.user_type !== 'admin') router.push('/');
+    if (user.user_type !== 'admin') router.push('/dashboard');
   }, [router, user, hydrated]);
 
   const handleQChange = (val) => {
@@ -222,15 +223,6 @@ export default function AdminAuditPage() {
     window.open(`/api/admin/audit?${params.toString()}`, '_blank');
   };
 
-  const inputSt = {
-    border: '1px solid #E5E7EB',
-    borderRadius: '8px',
-    padding: '9px 14px',
-    fontSize: '0.875rem',
-    outline: 'none',
-    backgroundColor: 'white',
-  };
-
   return (
     <PageLayout title="Audit Logs">
       <style>{`
@@ -238,17 +230,17 @@ export default function AdminAuditPage() {
         .audit-row-open td  { background: #FFF7ED; }
       `}</style>
 
-      {/* Filter Bar */}
-      <div className="card" style={{ display: 'flex', gap: '0.75rem', padding: '1rem 1.25rem', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <input
-          placeholder="Search users, actions, details..."
-          value={q}
-          onChange={(e) => handleQChange(e.target.value)}
-          style={{ ...inputSt, flex: '1 1 300px' }}
-        />
-        <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setOffset(0); }} style={inputSt} />
-        <input type="date" value={dateTo}   onChange={(e) => { setDateTo(e.target.value);   setOffset(0); }} style={inputSt} />
-        <button onClick={exportCsv} className="btn-outline">Export CSV</button>
+      {/* ── Page header (same layout as the Reports / Surveys pages) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 }}>Audit Logs</h2>
+        <button type="button" onClick={exportCsv} className="btn-primary btn-create">Export CSV</button>
+      </div>
+
+      {/* ── Filter bar (same as the Reports page) ── */}
+      <div style={FILTER_BAR_STYLE}>
+        <SearchField value={q} onChange={handleQChange} placeholder="Search users, actions, details..." />
+        <DateFilter label="From" value={dateFrom} onChange={(value) => { setDateFrom(value); setOffset(0); }} />
+        <DateFilter label="To" value={dateTo} onChange={(value) => { setDateTo(value); setOffset(0); }} />
       </div>
 
       {error && (

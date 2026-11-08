@@ -29,6 +29,8 @@ export async function GET(request, { params }) {
       type: question.field_type,
       display_order: question.display_order,
       version: question.version_number,
+      // False once the question was removed from its survey; its answers are kept.
+      active: Number(question.is_active) === 1,
     }));
 
     return NextResponse.json({ questions });

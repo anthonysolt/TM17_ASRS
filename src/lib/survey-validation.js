@@ -27,15 +27,12 @@ function sanitizeValue(v, depth = 0) {
   return String(v).slice(0, MAX_STRING);
 }
 
+// Responses are anonymous and identified by their submission id, so any
+// `name` / `email` sent by older clients is ignored.
 export function validateAndCleanSurvey(body) {
   if (!isPlainObject(body)) throw new Error('Invalid payload');
 
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const email = typeof body.email === 'string' ? body.email.trim() : '';
   const responses = body.responses;
-
-  if (!name) throw new Error('Missing or invalid `name`');
-  if (!email || !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Missing or invalid `email`');
   if (!isPlainObject(responses)) throw new Error('Missing or invalid `responses` object');
 
   const cleanedResponses = {};
@@ -46,8 +43,6 @@ export function validateAndCleanSurvey(body) {
   }
 
   const cleaned = {
-    name: name.slice(0, 200),
-    email: email.slice(0, 200),
     responses: cleanedResponses,
   };
 

@@ -12,11 +12,8 @@ import {
 } from '@/lib/goals/perform-goal-update';
 import { computeQuestionSourceValue, syncQuestionSourcedGoals } from '@/lib/goals/question-source';
 import { queryInitiativeQuestions } from '@/lib/query-helpers';
-import { ANALYSIS_METHOD_VALUES } from '@/lib/analysis-methods';
-
-function sameUpdatedAt(clientVal, serverVal) {
-  return String(clientVal ?? '').trim() === String(serverVal ?? '').trim();
-}
+import { sameUpdatedAt } from '@/lib/updated-at';
+import { GOAL_SOURCE_METHOD_VALUES, methodNeedsAnswer } from '@/lib/analysis-methods';
 
 function isValidWeight(weight) {
   const numericWeight = Number(weight);
@@ -31,21 +28,25 @@ function isValidWeight(weight) {
  * Validate an optional question source. Both fields empty means a manual goal.
  * Returns { source: { rootFieldId, method } | null } or { error }.
  */
-function parseQuestionSource(initiativeId, rootFieldId, method) {
+function parseQuestionSource(initiativeId, rootFieldId, method, answer) {
   const hasQuestion = rootFieldId !== undefined && rootFieldId !== null && rootFieldId !== '';
   const hasMethod = method !== undefined && method !== null && method !== '';
   if (!hasQuestion && !hasMethod) return { source: null };
   if (!hasQuestion || !hasMethod) {
     return { error: 'Select both a survey question and an analysis method' };
   }
-  if (!ANALYSIS_METHOD_VALUES.includes(method)) {
+  if (!GOAL_SOURCE_METHOD_VALUES.includes(method)) {
     return { error: 'Invalid analysis method' };
+  }
+  const targetAnswer = methodNeedsAnswer(method) ? String(answer ?? '').trim() : '';
+  if (methodNeedsAnswer(method) && !targetAnswer) {
+    return { error: 'Choose the target answer for this method' };
   }
   const questionId = Number(rootFieldId);
   if (!Number.isInteger(questionId) || queryInitiativeQuestions(db, initiativeId, [questionId]).length === 0) {
     return { error: 'The selected question does not belong to this initiative' };
   }
-  return { source: { rootFieldId: questionId, method } };
+  return { source: { rootFieldId: questionId, method, answer: targetAnswer || null } };
 }
 
 // Compute overall weighted score across all goals
@@ -151,6 +152,7 @@ export async function POST(request) {
       deadline,
       source_root_field_id,
       source_method,
+      source_answer,
     } = body;
 
     // Validate required fields
@@ -162,9 +164,9 @@ export async function POST(request) {
     }
 
     // Validate scoring_method value
-    if (!['linear', 'threshold', 'binary'].includes(scoring_method)) {
+    if (!['linear', 'binary'].includes(scoring_method)) {
       return NextResponse.json(
-        { error: 'Invalid scoring_method. Must be: linear, threshold, or binary' },
+        { error: 'Invalid scoring_method. Must be: linear or binary' },
         { status: 400 }
       );
     }
@@ -177,14 +179,14 @@ export async function POST(request) {
       );
     }
 
-    const parsedSource = parseQuestionSource(initiative_id, source_root_field_id, source_method);
+    const parsedSource = parseQuestionSource(initiative_id, source_root_field_id, source_method, source_answer);
     if (parsedSource.error) {
       return NextResponse.json({ error: parsedSource.error }, { status: 400 });
     }
     const { source } = parsedSource;
     // A question-sourced goal starts from the computed value, not a typed one.
     const startingValue = source
-      ? (computeQuestionSourceValue(db, initiative_id, source.rootFieldId, source.method).value ?? 0)
+      ? (computeQuestionSourceValue(db, initiative_id, source.rootFieldId, source.method, source.answer).value ?? 0)
       : (current_value || 0);
 
     // Verify initiative exists
@@ -200,8 +202,8 @@ export async function POST(request) {
     }
 
     const result = db.prepare(`
-      INSERT INTO initiative_goal (initiative_id, goal_name, description, target_metric, target_value, current_value, weight, scoring_method, deadline, source_root_field_id, source_method)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO initiative_goal (initiative_id, goal_name, description, target_metric, target_value, current_value, weight, scoring_method, deadline, source_root_field_id, source_method, source_answer)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       initiative_id,
       goal_name.trim(),
@@ -213,7 +215,8 @@ export async function POST(request) {
       scoring_method,
       deadline || null,
       source?.rootFieldId ?? null,
-      source?.method ?? null
+      source?.method ?? null,
+      source?.answer ?? null
     );
 
     // Proportionally rebalance the other goals around the new goal's weight
@@ -250,6 +253,7 @@ export async function POST(request) {
         deadline: deadline || null,
         source_root_field_id: source?.rootFieldId ?? null,
         source_method: source?.method ?? null,
+        source_answer: source?.answer ?? null,
         adjusted_goal_weights: rebalanced.adjustedGoals,
       },
     });
@@ -305,17 +309,19 @@ export async function PUT(request) {
 
     // Validate a changed question source; a sourced goal's current value is
     // always computed, so a typed current_value is ignored.
-    if (proposedPatch.source_root_field_id !== undefined || proposedPatch.source_method !== undefined) {
+    if (proposedPatch.source_root_field_id !== undefined || proposedPatch.source_method !== undefined || proposedPatch.source_answer !== undefined) {
       const parsedSource = parseQuestionSource(
         existing.initiative_id,
         proposedPatch.source_root_field_id !== undefined ? proposedPatch.source_root_field_id : existing.source_root_field_id,
-        proposedPatch.source_method !== undefined ? proposedPatch.source_method : existing.source_method
+        proposedPatch.source_method !== undefined ? proposedPatch.source_method : existing.source_method,
+        proposedPatch.source_answer !== undefined ? proposedPatch.source_answer : existing.source_answer
       );
       if (parsedSource.error) {
         return NextResponse.json({ error: parsedSource.error }, { status: 400 });
       }
       proposedPatch.source_root_field_id = parsedSource.source?.rootFieldId ?? null;
       proposedPatch.source_method = parsedSource.source?.method ?? null;
+      proposedPatch.source_answer = parsedSource.source?.answer ?? null;
     }
     const isSourced = (proposedPatch.source_root_field_id !== undefined
       ? proposedPatch.source_root_field_id

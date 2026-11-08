@@ -4,7 +4,9 @@ import { useMemo, useState } from 'react';
 import DataTable from '@/components/DataTable';
 import GoalsTable from '@/components/GoalsTable';
 import { getReportStatusLabel } from '@/lib/report-status';
-import { computeTrendData, processReportData, validateTrendConfig } from '@/lib/report-engine';
+import { computeTrendData, isQuestionFilterActive, processReportData, rowsForAnalysis, validateTrendConfig } from '@/lib/report-engine';
+import { describeQuestionFilter, describeQuestionFilterScope } from '@/lib/report-view-filters';
+import { formatDateRange, isDateRangeActive } from '@/lib/report-date-range';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell,
@@ -43,29 +45,31 @@ export default function StepPreview({ reportConfig, tableData, selectedGoals = [
         },
       };
     }
+    const questionAnalyses = questionSelections.map((selection) => ({ ...selection, column: selection.label }));
     const processed = processReportData(
       tableData,
       reportConfig.filters || {},
       reportConfig.expressions || [],
       reportConfig.sorts || [],
-      attributes
+      attributes,
+      questionAnalyses
     );
     return {
       ...processed,
-      trendData: questionSelections.flatMap((selection) => {
+      trendData: questionAnalyses.flatMap((selection) => {
         const trendValidation = validateTrendConfig({
           variables: [selection.label], enabledCalc: true, enabledDisplay: true,
           method: selection.method, thresholdPct: 2,
         }, attributes);
         return trendValidation.valid
-          ? computeTrendData(processed.filteredData, trendValidation.normalized, { initiativeId: selectedInitiativeId, reportName })
+          ? computeTrendData(rowsForAnalysis(processed.filteredData, selection), trendValidation.normalized, { initiativeId: selectedInitiativeId, reportName })
           : [];
       }),
     };
   }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, questionSelections, selectedInitiativeId, reportName]);
 
   // Build human-readable config summary
-  const activeFilterEntries = Object.entries(reportConfig.filters || {}).filter(([, v]) => v && v !== 'All');
+  const activeQuestionFilters = questionSelections.filter((selection) => isQuestionFilterActive(selection.filter));
   const hasExpressions = (reportConfig.expressions || []).length > 0;
   const hasSorts = (reportConfig.sorts || []).length > 0;
 
@@ -102,7 +106,7 @@ export default function StepPreview({ reportConfig, tableData, selectedGoals = [
   return (
     <div>
       <h2 style={{ fontSize: '1.15rem', fontWeight: '600', marginBottom: '0.5rem' }}>
-        Step 6: Preview & Generate
+        Step 5: Preview & Generate
       </h2>
       <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
         Review your configuration and preview the results before generating the report.
@@ -156,12 +160,23 @@ export default function StepPreview({ reportConfig, tableData, selectedGoals = [
               {selectedGoals.map((goal) => goal.goal_name).join(', ') || '—'}
             </p>
           </div>
-          {activeFilterEntries.length > 0 && (
+          {isDateRangeActive(reportConfig) && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Response Date Range</span>
+              <p style={{ margin: '0.15rem 0 0 0' }}>Submitted {formatDateRange(reportConfig)}</p>
+            </div>
+          )}
+          {activeQuestionFilters.length > 0 && (
             <div style={{ gridColumn: '1 / -1' }}>
               <span style={{ color: 'var(--color-text-light)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Filters</span>
-              <p style={{ margin: '0.15rem 0 0 0' }}>
-                {activeFilterEntries.map(([k, v]) => `${k} = "${v}"`).join(', ')}
-              </p>
+              {activeQuestionFilters.map((selection) => (
+                <p key={selection.id} style={{ margin: '0.15rem 0 0 0' }}>
+                  {selection.label} {describeQuestionFilter(selection.filter)}{' '}
+                  <span style={{ color: 'var(--color-text-light)' }}>
+                    ({describeQuestionFilterScope(selection.filter)})
+                  </span>
+                </p>
+              ))}
             </div>
           )}
           {hasExpressions && (

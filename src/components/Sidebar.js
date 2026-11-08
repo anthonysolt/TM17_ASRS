@@ -8,10 +8,11 @@ const navGroups = [
   {
     label: 'Main',
     items: [
-      { href: '/', label: 'Dashboard', icon: 'home', permission: null },
+      { href: '/dashboard', label: 'Dashboard', icon: 'home', permission: null },
       { href: '/initiative-creation', label: 'Initiatives', icon: 'briefcase', permission: 'initiatives.manage' },
       { href: '/reporting', label: 'Reports', icon: 'bar-chart', permission: 'reporting.view' },
-      { href: '/manage-surveys', label: 'Surveys', icon: 'clipboard', permission: 'surveys.distribute' },
+      // Survey Distribution is a tab of the Surveys section.
+      { href: '/manage-surveys', label: 'Surveys', icon: 'clipboard', permission: 'surveys.distribute', alsoActiveFor: ['/survey-distribution'] },
     ],
   },
   {
@@ -36,6 +37,7 @@ const navGroups = [
 ];
 
 const icons = {
+  globe: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>,
   home: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>,
   briefcase: <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>,
   'bar-chart': <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8"><path d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>,
@@ -96,7 +98,7 @@ export default function Sidebar() {
                   <Link
                     key={item.href}
                     href={resolvedHref}
-                    className={`nav-item ${isActive(resolvedHref) ? 'active' : ''}`}
+                    className={`nav-item ${[resolvedHref, ...(item.alsoActiveFor || [])].some(isActive) ? 'active' : ''}`}
                   >
                     {icons[item.icon]}
                     {item.label}

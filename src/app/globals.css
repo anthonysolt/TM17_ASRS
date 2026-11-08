@@ -584,38 +584,6 @@ body {
   gap: 24px;
 }
 
-.topbar-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-}
-
-.topbar-search {
-  flex: 1;
-  max-width: 480px;
-  margin: 0 auto;
-  position: relative;
-}
-
-.topbar-search input {
-  width: 100%;
-  padding: 8px 16px 8px 38px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--color-text-primary);
-  background: var(--color-bg-primary);
-  outline: none;
-  transition: all 150ms ease;
-}
-
-.topbar-search input:focus {
-  border-color: var(--color-asrs-orange);
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(230,126,34,.1);
-}
-
 .content-area {
   padding: 32px;
   width: 100%;
@@ -663,6 +631,44 @@ body {
   background: var(--color-asrs-orange-hover);
 }
 
+/* Square icon-only button (e.g. Refresh), same height as the header buttons.
+   Doubled class so it beats .btn-outline's padding wherever that rule sits. */
+.btn-icon.btn-icon {
+  justify-content: center;
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: #6B7280;
+}
+.btn-icon.btn-icon svg {
+  flex-shrink: 0;
+}
+.btn-icon:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.icon-spin {
+  animation: public-spin 0.8s linear infinite;
+}
+
+/* Page/section "Create …" buttons share one size whether rendered as a
+   <button> or a <Link>: the original header-button height, and a common
+   minimum width (a longer label like "Create Email Distribution" grows to fit). */
+.btn-create {
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 150px;
+  max-width: 100%;
+  height: 34px;
+  padding: 0 16px;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
 .btn-outline {
   display: inline-flex;
   align-items: center;
@@ -698,6 +704,68 @@ body {
 .pill-gray { background: #F3F4F6; color: #6B7280; }
 .pill-orange { background: #FFF7ED; color: #EA580C; }
 .pill-blue { background: #EFF6FF; color: #2563EB; }
+
+/* Expand/remove controls for expandable table rows (e.g. survey submissions) */
+.row-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.row-icon-btn:hover,
+.row-icon-btn:focus-visible {
+  background: #F3F4F6;
+  color: #111827;
+}
+.row-icon-btn svg {
+  transition: transform 150ms ease;
+}
+.row-icon-btn[aria-expanded="true"] {
+  color: var(--color-asrs-orange);
+}
+.row-icon-btn[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.row-icon-btn.row-icon-btn-remove:hover,
+.row-icon-btn.row-icon-btn-remove:focus-visible {
+  background: #FEF2F2;
+  border-color: #FECACA;
+  color: #DC2626;
+}
+.row-icon-btn:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.data-table tr.row-expanded > td {
+  background: #FFF7ED;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Initiative name linking to its own page (dashboard + initiatives tables) */
+.initiative-link {
+  color: #111827;
+  font-weight: 600;
+  text-decoration: none;
+}
+.initiative-link:hover,
+.initiative-link:focus-visible {
+  text-decoration: underline;
+}
 
 /* Stat cards */
 .stats-row {

@@ -5,7 +5,7 @@
  * This is the "brain" of the report page. It assembles all the sub-components:
  * - Report header (title, UUID, date)
  * - Summary statistics cards
- * - Filter and Sort panels
+ * - Applied question filters (read-only) and Sort panel
  * - Chart display (pie, bar, line)
  * - Data table
  * - Trend display
@@ -21,7 +21,6 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import FilterPanel from './FilterPanel';
 import SortPanel from './SortPanel';
 import ChartDisplay from './ChartDisplay';
 import DataTable from './DataTable';
@@ -29,15 +28,14 @@ import TrendDisplay from './TrendDisplay';
 import GoalsTable from './GoalsTable';
 // import AIInsightsPanel from './AIInsightsPanel';
 import { getSortedReportData } from '@/lib/data-service';
-import { buildFilteredChartData, filterReportRows, getReportFilterColumns } from '@/lib/report-view-filters';
+import { describeQuestionFilter, describeQuestionFilterScope, getReportFilterColumns } from '@/lib/report-view-filters';
+import { formatDateRange } from '@/lib/report-date-range';
 
 // showDataTable: set false to hide the survey responses table (and the Charts/Table view toggle).
 export default function ReportDashboard({ reportData, trendData, selectedInitiative, userRole, reportDbId, preloadedInsights, showDataTable = true }) {
-  // ---- STATE for filters and sorts ----
-  // activeFilters stores the user's current filter selections as key-value pairs
-  // Example: { grade: "7th", school: "Lincoln MS" }
-  const [activeFilters, setActiveFilters] = useState({});
-
+  // ---- STATE for sorts ----
+  // Filters are chosen per question during report creation; the dashboard only
+  // shows which were applied.
   // activeSorts stores the user's sorting preferences as an array of objects
   // Example: [{ attribute: "Grade", direction: "asc" }]
   const [activeSorts, setActiveSorts] = useState([]);
@@ -57,37 +55,16 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
   const filterAttributes = getReportFilterColumns(reportData?.tableData || []);
 
   /**
-   * useMemo — Recalculates filtered & sorted table data only when
-   * the filters, sorts, or base report data change. This prevents
-   * unnecessary recalculations on every render.
+   * useMemo — Recalculates sorted table data only when the sorts or base
+   * report data change (simulates database ORDER BY per REP021).
    */
   const processedTableData = useMemo(() => {
     if (!reportData?.tableData) return [];
+    if (activeSorts.length === 0) return reportData.tableData;
+    return getSortedReportData(reportData.tableData, activeSorts);
+  }, [reportData, activeSorts]);
 
-    // Step 1: Apply filters (simulates database WHERE clause per REP020)
-    let data = filterReportRows(reportData.tableData, activeFilters);
-
-    // Step 2: Apply sorts (simulates database ORDER BY per REP021)
-    // Per REP022, filtering happens BEFORE sorting
-    if (activeSorts.length > 0) {
-      data = getSortedReportData(data, activeSorts);
-    }
-
-    return data;
-  }, [reportData, activeFilters, activeSorts]);
-
-  /**
-   * Recompute chart data from the filtered table rows so charts
-   * update when the user applies filters (Bug 2 fix).
-   */
-  const processedChartData = useMemo(() => {
-    if (!reportData?.chartData) return null;
-
-    const hasActiveFilters = Object.values(activeFilters).some(v => v && v !== 'All');
-    if (!hasActiveFilters) return reportData.chartData;
-
-    return buildFilteredChartData(processedTableData);
-  }, [reportData, processedTableData, activeFilters]);
+  const appliedQuestionFilters = reportData?.questionFilters || [];
 
   const filteredAverageRating = (() => {
     const ratingColumn = filterAttributes.find(column => /rating/i.test(column));
@@ -97,13 +74,10 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
     return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
   })();
 
-  const hasActiveReportFilters = Object.values(activeFilters).some(value => value && value !== 'All');
-  const liveDroppedByFilters = Math.max((reportData.tableData?.length || 0) - processedTableData.length, 0);
-
   /**
    * Inline-filtered & sorted table data — applies the Data Tools column
-   * filters and inline sort on top of the already-processed data from the
-   * main Filter/Sort panels. All client-side, local to this component.
+   * filters and inline sort on top of the Sort panel's ordering.
+   * All client-side, local to this component.
    */
   const inlineProcessedData = useMemo(() => {
     let data = processedTableData;
@@ -302,16 +276,38 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
 
       </div>
 
-      {/* ---- FILTER & SORT PANELS ---- */}
+      {/* ---- APPLIED FILTERS & SORT PANEL ---- */}
       {/* Stacks vertically on mobile via .filter-sort-grid */}
       <div className="filter-sort-grid">
-        {/* Filter Panel — up to 7 attribute filters (per REP001/REP020) */}
-        <FilterPanel
-          attributes={filterAttributes}
-          activeFilters={activeFilters}
-          onFiltersChange={setActiveFilters}
-          tableData={reportData.tableData}
-        />
+        {/* Filters were set per question when the report was generated */}
+        <div className="asrs-card">
+          <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: '0 0 0.75rem 0' }}>
+            Filters Applied
+          </h3>
+          {reportData?.dateRange && (
+            <p style={{ fontSize: '0.85rem', margin: appliedQuestionFilters.length ? '0 0 0.5rem 0' : 0 }}>
+              <strong>Response date range:</strong> submitted {formatDateRange(reportData.dateRange)}
+            </p>
+          )}
+          {appliedQuestionFilters.length === 0 ? (
+            !reportData?.dateRange && (
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-text-light)', margin: 0 }}>
+                None. This report includes every response.
+              </p>
+            )
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.85rem', lineHeight: 1.6 }}>
+              {appliedQuestionFilters.map(selection => (
+                <li key={selection.id}>
+                  <strong>{selection.label}</strong> {describeQuestionFilter(selection.filter)}{' '}
+                  <span style={{ color: 'var(--color-text-light)' }}>
+                    ({describeQuestionFilterScope(selection.filter)})
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {/* Sort Panel — up to 7 sorting levels (per REP002/REP021) */}
         <SortPanel
           attributes={selectedInitiative?.attributes || []}
@@ -323,10 +319,16 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
       {/* ---- CHARTS ---- */}
       {/* Displayed for Public (website view) per REP016 — graphical displays */}
       {(!showDataTable || activeView === 'charts' || activeView === 'both') && (
-        <ChartDisplay chartData={processedChartData} />
+        <ChartDisplay chartData={reportData.chartData} />
       )}
 
       {/* ---- DATA TABLE (with Data Tools: inline filters, sort, calculations) ---- */}
+      {showDataTable && (activeView === 'table' || activeView === 'both') && reportData.tableRowsTruncated && (
+        <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', margin: '0 0 0.5rem' }}>
+          This report saved the first {reportData.tableData?.length ?? 0} of {reportData.tableRowCount} matching responses.
+          Download the report to get every row (downloads use current responses).
+        </p>
+      )}
       {showDataTable && (activeView === 'table' || activeView === 'both') && (
         <DataTable
           data={inlineProcessedData}
@@ -366,11 +368,11 @@ export default function ReportDashboard({ reportData, trendData, selectedInitiat
             Calculation Explainability
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', fontSize: '0.88rem' }}>
-            <div>Input rows: {hasActiveReportFilters ? reportData.tableData.length : reportData.explainability.inputRowCount}</div>
-            <div>After filters: {hasActiveReportFilters ? processedTableData.length : reportData.explainability.afterFilterCount}</div>
+            <div>Input rows: {reportData.explainability.inputRowCount}</div>
+            <div>After filters: {reportData.explainability.afterFilterCount}</div>
             <div>After expressions: {reportData.explainability.afterExpressionCount}</div>
-            <div>Output rows: {hasActiveReportFilters ? processedTableData.length : reportData.explainability.outputRowCount}</div>
-            <div>Dropped by filters: {hasActiveReportFilters ? liveDroppedByFilters : (reportData.explainability.droppedByStep?.filters ?? 0)}</div>
+            <div>Output rows: {reportData.explainability.outputRowCount}</div>
+            <div>Dropped by filters: {reportData.explainability.droppedByStep?.filters ?? 0}</div>
             <div>Dropped by expressions: {reportData.explainability.droppedByStep?.expressions ?? 0}</div>
           </div>
         </div>

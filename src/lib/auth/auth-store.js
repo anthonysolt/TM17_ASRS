@@ -7,6 +7,10 @@ class AuthStore {
   constructor() {
     this.user = null;
     this.hydrated = false;
+    // True once the server has confirmed (or denied) the session, or after an
+    // explicit login/logout. Until then a localStorage user may be stale.
+    this.sessionChecked = false;
+    this._sessionPromise = null;
     this.listeners = new Set();
     this.uiBus = getUiEventBus();
 
@@ -45,11 +49,20 @@ class AuthStore {
     }
   }
 
-  validateSession() {
-    if (this._validating || typeof window === 'undefined') return;
-    this._validating = true;
+  /**
+   * isReady — Whether the current user can be trusted for rendering. With no
+   * stored user there is nothing stale to show; with one, wait for the server.
+   */
+  isReady() {
+    this.ensureHydrated();
+    return this.sessionChecked || !this.user;
+  }
 
-    fetch('/api/auth/me', { credentials: 'same-origin' })
+  validateSession() {
+    if (typeof window === 'undefined') return Promise.resolve();
+    if (this._sessionPromise) return this._sessionPromise;
+
+    this._sessionPromise = fetch('/api/auth/me', { credentials: 'same-origin' })
       .then((res) => {
         if (!res.ok) {
           // Server says no valid session — clear stale localStorage
@@ -70,8 +83,14 @@ class AuthStore {
         // Network error — keep local state as-is
       })
       .finally(() => {
-        this._validating = false;
+        this._sessionPromise = null;
+        // setUser() above already marks the session checked and notifies.
+        if (!this.sessionChecked) {
+          this.sessionChecked = true;
+          this.notify();
+        }
       });
+    return this._sessionPromise;
   }
 
   getUser() {
@@ -81,6 +100,8 @@ class AuthStore {
 
   setUser(user) {
     this.user = user || null;
+    // An explicit login, logout, or server sync is authoritative.
+    this.sessionChecked = true;
     if (typeof window !== 'undefined') {
       if (this.user) {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.user));

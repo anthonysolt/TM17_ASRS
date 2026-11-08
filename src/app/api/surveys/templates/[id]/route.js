@@ -35,7 +35,8 @@ import { requirePermission } from '@/lib/auth/server-auth';
 import { logAudit } from '@/lib/audit';
 import { deleteFormAndFields } from '@/lib/forms/delete-form';
 import { createFormRevision } from '@/lib/forms/create-form-revision';
-import { isLikertType } from '@/lib/forms/likert-scales';
+import { hasExpectedUpdatedAt, sameUpdatedAt } from '@/lib/updated-at';
+import { hasFixedOptions } from '@/lib/forms/fixed-options';
 
 function resolveRules(fieldRulesJson, formFieldRulesJson) {
   const base = fieldRulesJson ? JSON.parse(fieldRulesJson) : null;
@@ -62,7 +63,7 @@ export async function GET(request, context) {
 
     // Query form by form_id (with initiative name)
     const form = db.prepare(`
-      SELECT f.form_id AS id, f.form_name AS title, f.description, f.created_at,
+      SELECT f.form_id AS id, f.form_name AS title, f.description, f.created_at, f.updated_at,
              f.is_published AS published, f.initiative_id,
              i.initiative_name, fv.form_version_id, fv.version_number
       FROM form f
@@ -93,7 +94,7 @@ export async function GET(request, context) {
 
     // Get questions
     const getQuestions = db.prepare(`
-      SELECT fq.form_question_id, f.field_id, f.field_key, f.field_label, f.field_type,
+      SELECT fq.form_question_id, fq.root_field_id, f.field_id, f.field_key, f.field_label, f.field_type,
              fq.required, fq.help_text, f.scope, f.initiative_id,
              f.is_core_question, f.is_initiative_specific,
              f.validation_rules AS field_rules, fq.validation_rules AS form_question_rules
@@ -109,12 +110,13 @@ export async function GET(request, context) {
     const questions = getQuestions.all(form.id, form.form_version_id).map(q => {
       const rules = resolveRules(q.field_rules, q.form_question_rules);
       const displayType = rules?.ui_type || q.field_type;
-      const isOptionType = ['select', 'radio', 'checkbox', 'choice', 'multiselect'].includes(displayType) || isLikertType(displayType);
-      const isYesNo = displayType === 'yesno';
-      const optionRows = (isOptionType || isYesNo) ? getOptions.all(q.field_id) : [];
+      const isOptionType = ['select', 'radio', 'checkbox', 'choice', 'multiselect'].includes(displayType) || hasFixedOptions(displayType);
+      const optionRows = isOptionType ? getOptions.all(q.field_id) : [];
       const rawOptions = optionRows.map(opt => opt.option_value);
       return {
         id: q.field_id,
+        // Stable across revisions of the question; survey responses key answers by it.
+        rootId: q.root_field_id ?? q.field_id,
         form_question_id: q.form_question_id,
         text: {
           question: q.field_label,
@@ -128,7 +130,6 @@ export async function GET(request, context) {
           validation_rules: rules,
           ...(isOptionType && rawOptions ? { options: rawOptions } : {}),
           ...(isOptionType ? { optionDetails: optionRows.map(option => ({ value: option.option_value, label: option.display_label })) } : {}),
-          ...(isYesNo && rawOptions ? { subQuestions: rawOptions } : {}),
           ...(q.help_text ? { help_text: q.help_text } : {})
         }
       };
@@ -144,6 +145,8 @@ export async function GET(request, context) {
       version_number: form.version_number,
       questions,
       createdAt: form.created_at,
+      // Sent back as expected_updated_at on PUT to reject stale saves.
+      updated_at: form.updated_at,
       published: !!form.published
     };
 
@@ -191,12 +194,22 @@ export async function PUT(request, context) {
       return new Response(JSON.stringify({ error: 'questions must be an array' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const revision = db.transaction(() => createFormRevision(
-      db,
-      existing,
-      body,
-      auth.user?.user_id || null
-    ))();
+    // Re-read the form inside the transaction so a save that started from an
+    // older copy can't publish a competing version.
+    const revision = db.transaction(() => {
+      const current = db.prepare('SELECT * FROM form WHERE form_id = ?').get(templateId);
+      if (hasExpectedUpdatedAt(body.expected_updated_at) && !sameUpdatedAt(body.expected_updated_at, current.updated_at)) {
+        return null;
+      }
+      return createFormRevision(db, current, body, auth.user?.user_id || null);
+    })();
+
+    if (!revision) {
+      return new Response(JSON.stringify({
+        error: 'This survey was changed by someone else since you opened it. Your changes were not saved. Reload to see the latest version.',
+        conflict: true,
+      }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+    }
 
     logAudit(db, {
       event: 'survey.updated',
@@ -207,9 +220,12 @@ export async function PUT(request, context) {
         title: body.title,
         status: body.status,
         version_number: revision.versionNumber,
+        edit_mode: revision.editMode,
+        version_created: revision.versionCreated,
         questions_published: revision.questionCount,
-        questions_removed: revision.removedQuestionCount,
-        answers_deleted: revision.deletedAnswerCount,
+        questions_retired: revision.retiredQuestionCount,
+        answers_retained: revision.retainedAnswerCount,
+        in_place_changes: revision.inPlaceChangeCount,
       },
     });
 
@@ -240,25 +256,6 @@ export async function DELETE(request, context) {
     const existing = db.prepare('SELECT form_name FROM form WHERE form_id = ?').get(templateId);
 
     const deleteTx = db.transaction((id) => {
-      const affectedSurveyIds = db.prepare('SELECT id, responses FROM surveys').all()
-        .filter((survey) => {
-          try {
-            return Number(JSON.parse(survey.responses)?.templateId) === id;
-          } catch {
-            return false;
-          }
-        })
-        .map((survey) => survey.id);
-
-      if (affectedSurveyIds.length) {
-        const deleteReport = db.prepare('DELETE FROM reports WHERE survey_id = ?');
-        affectedSurveyIds.forEach((sid) => deleteReport.run(sid));
-      }
-
-      if (affectedSurveyIds.length) {
-        const deleteSurvey = db.prepare('DELETE FROM surveys WHERE id = ?');
-        affectedSurveyIds.forEach((surveyId) => deleteSurvey.run(surveyId));
-      }
       db.prepare('DELETE FROM submission WHERE form_id = ?').run(id);
       db.prepare('DELETE FROM survey_distribution WHERE survey_template_id = ?').run(String(id));
       db.prepare("DELETE FROM qr_codes WHERE qr_type = 'survey_template' AND target_id = ?").run(id);

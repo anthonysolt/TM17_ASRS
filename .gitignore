@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+# editor swap files
+*.swp
 
 # local data (legacy SQLite — no longer used)
 /data/
@@ -44,3 +46,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .gstack/
+
+# local database backups
+/database/backups/

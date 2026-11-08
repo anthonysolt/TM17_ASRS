@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api/client';
 import { getEditTemplateUrl, templateToEditableForm } from '@/lib/forms/form-editing-client';
-import { getLikertLabels, isLikertType, LIKERT_SCALES } from '@/lib/forms/likert-scales';
+import { LIKERT_SCALES } from '@/lib/forms/likert-scales';
+import { getFixedOptionLabels, hasFixedOptions } from '@/lib/forms/fixed-options';
 
 // Question type labels + icons
 const QUESTION_TYPE_DEFS = [
@@ -15,12 +16,30 @@ const QUESTION_TYPE_DEFS = [
   { type: 'select',     label: 'Dropdown',      icon: '⌄' },
   { type: 'checkbox',   label: 'Checkbox',      icon: '☑' },
   { type: 'radio',      label: 'Multiple Choice', icon: '⊙' },
+  { type: 'yesno',      label: 'Yes/No',        icon: '✓' },
   { type: 'date',       label: 'Date',          icon: '📅' },
   { type: 'rating',     label: 'Rating',        icon: '★' },
   ...Object.entries(LIKERT_SCALES).map(([type, scale]) => ({ type, label: scale.label, icon: '☷' })),
   { type: 'email',      label: 'Email',         icon: '@' },
   { type: 'url',        label: 'URL / Link',    icon: '🔗' },
 ];
+
+function describeRevision(revision) {
+  if (!revision) return 'Form updated successfully!';
+  if (!revision.versionCreated) {
+    return revision.editMode === 'in_place'
+      ? 'Form updated successfully! Only question settings changed, so no new version was created.'
+      : 'Form updated successfully! No question changes, so no new version was created.';
+  }
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const retired = revision.retiredQuestionCount > 0
+    ? ` ${plural(revision.retiredQuestionCount, 'question')} retired; ${plural(revision.retainedAnswerCount, 'response')} kept for reports.`
+    : '';
+  const goals = revision.affectedGoalCount > 0
+    ? ` ${plural(revision.affectedGoalCount, 'goal')} ${revision.affectedGoalCount === 1 ? 'uses' : 'use'} questions you reworded or whose options changed; check that ${revision.affectedGoalCount === 1 ? 'its' : 'their'} targets still make sense.`
+    : '';
+  return `Form updated successfully! Version ${revision.versionNumber} created.${retired}${goals}`;
+}
 
 export default function FormCreationPage() {
   const router = useRouter();
@@ -39,8 +58,14 @@ export default function FormCreationPage() {
   const [hoveredSavedQuestionId, setHoveredSavedQuestionId] = useState(null);
   const [removingSavedQuestionId, setRemovingSavedQuestionId] = useState(null);
   // Questions already on the form being edited: their type is locked and
-  // removing them deletes their answers.
+  // removing them retires them (their answers are kept for reports).
   const [savedQuestionIds, setSavedQuestionIds] = useState(new Set());
+  // updated_at of the loaded form, sent back so a stale save is rejected.
+  const [loadedUpdatedAt, setLoadedUpdatedAt] = useState(null);
+  // Questions removed from this form in earlier edits (edit mode only).
+  const [retiredQuestions, setRetiredQuestions] = useState([]);
+  const [retiredError, setRetiredError] = useState('');
+  const [deletingRetiredId, setDeletingRetiredId] = useState(null);
 
   useEffect(() => {
     setEditingTemplateId(new URLSearchParams(window.location.search).get('edit'));
@@ -82,6 +107,8 @@ export default function FormCreationPage() {
         setSelectedInitiative(editable.initiativeId);
         setSelectedFields(editable.questions);
         setSavedQuestionIds(new Set(editable.questions.map(question => question.field_id)));
+        setLoadedUpdatedAt(templateResult.value.updated_at ?? null);
+        loadRetiredQuestions(editingTemplateId);
       }
       setLoading(false);
     });
@@ -94,18 +121,95 @@ export default function FormCreationPage() {
     ),
   ];
 
-  // Questions already saved to the core or initiative library keep their
-  // classification; any other question can be promoted from the form.
-  const libraryFieldIds = new Set(
+  // Saved (core or initiative) questions keep their classification while
+  // unchanged. Once their text or options are edited they become a regular
+  // question, which can then be saved to a library as a new entry.
+  const libraryById = new Map(
     [...fieldCatalog.common, ...fieldCatalog.initiative_specific]
       .filter(field => field.is_core_question || field.is_initiative_specific)
-      .map(field => field.field_id)
+      .map(field => [field.field_id, field])
   );
+
+  // Mirrors isSameDefinition on the server: an option matches its label or stored value.
+  const matchesLibraryDefinition = (question, libraryField) => {
+    if (String(question.field_label || '').trim() !== String(libraryField.field_label || '').trim()) return false;
+    const options = (question.options || []).map(option => String(option).trim()).filter(Boolean);
+    const stored = libraryField.field_options || [];
+    return options.length === stored.length && options.every((option, index) =>
+      option === stored[index].display_label || option === stored[index].option_value
+    );
+  };
+
+  const getLibraryField = (question) => libraryById.get(question.field_id) || null;
+  const isUneditedLibraryQuestion = (question) => {
+    const libraryField = getLibraryField(question);
+    return !!libraryField && matchesLibraryDefinition(question, libraryField);
+  };
+
+  async function loadRetiredQuestions(templateId) {
+    setRetiredError('');
+    try {
+      const res = await apiFetch(`${getEditTemplateUrl(templateId)}/retired-questions`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      setRetiredQuestions(Array.isArray(data.questions) ? data.questions : []);
+    } catch (err) {
+      console.error('Failed to load retired questions:', err);
+      setRetiredQuestions([]);
+      setRetiredError('Retired questions could not be loaded, so they cannot be restored right now. Refresh to try again.');
+    }
+  }
+
+  // Put a retired question back on the form; it is restored (with its earlier
+  // answers) when the form is saved.
+  const unretireQuestion = (question) => {
+    if (selectedFields.some(sf => sf.field_id === question.fieldId)) return;
+    setSelectedFields([...selectedFields, {
+      field_id: question.fieldId,
+      field_key: question.fieldKey || `field_${question.fieldId}`,
+      field_label: question.label,
+      field_type: question.type,
+      scope: question.scope,
+      initiative_id: question.initiativeId,
+      required: question.required,
+      help_text: question.helpText || '',
+      is_core_question: question.isCoreQuestion,
+      is_initiative_specific: question.isInitiativeSpecific,
+      validation_rules: null,
+      options: question.options || [],
+    }]);
+    setSavedQuestionIds(new Set([...savedQuestionIds, question.fieldId]));
+  };
+
+  const deleteRetiredQuestion = async (question) => {
+    const answers = `${question.answerCount} response${question.answerCount === 1 ? '' : 's'}`;
+    const goals = question.linkedGoalCount > 0
+      ? `\n\n${question.linkedGoalCount} goal${question.linkedGoalCount === 1 ? ' uses' : 's use'} this question as a data source and will be unlinked.`
+      : '';
+    if (!confirm(
+      `Permanently delete "${question.label}"?\n\n` +
+      `This deletes ${answers} to it. Reports will no longer include this question.${goals}\n\nThis cannot be undone.`
+    )) return;
+    setDeletingRetiredId(question.rootFieldId);
+    try {
+      const res = await apiFetch(
+        `${getEditTemplateUrl(editingTemplateId)}/retired-questions?rootFieldId=${question.rootFieldId}`,
+        { method: 'DELETE' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `server responded ${res.status}`);
+      await loadRetiredQuestions(editingTemplateId);
+    } catch (err) {
+      alert('Could not delete the question: ' + err.message);
+    } finally {
+      setDeletingRetiredId(null);
+    }
+  };
 
   const addField = (field) => {
     if (selectedFields.some(sf => sf.field_id === field.field_id)) return;
     const displayType = field.validation_rules?.ui_type || field.field_type;
-    const needsOptions = ['select', 'radio', 'checkbox'].includes(displayType) || isLikertType(displayType);
+    const needsOptions = ['select', 'radio', 'checkbox'].includes(displayType) || hasFixedOptions(displayType);
     setSelectedFields([...selectedFields, {
       field_id: field.field_id,
       field_key: field.field_key,
@@ -117,7 +221,7 @@ export default function FormCreationPage() {
       is_core_question: !!field.is_core_question,
       is_initiative_specific: !!field.is_initiative_specific,
       validation_rules: null,
-      options: isLikertType(displayType) ? getLikertLabels(displayType) : needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
+      options: hasFixedOptions(displayType) ? getFixedOptionLabels(displayType) : needsOptions ? (field.options || ['Option 1', 'Option 2']) : [],
     }]);
   };
 
@@ -125,8 +229,8 @@ export default function FormCreationPage() {
     if (savedQuestionIds.has(fieldId)) {
       const question = selectedFields.find(f => f.field_id === fieldId);
       const confirmed = confirm(
-        `Delete "${question?.field_label || 'this question'}"?\n\n` +
-        'All data relating to this question, including every response to it, will be permanently lost when you save your changes. This cannot be undone.'
+        `Remove "${question?.field_label || 'this question'}" from this survey?\n\n` +
+        'When you save, it will be retired: it no longer appears on the survey, but its existing responses are kept and still show in reports.'
       );
       if (!confirmed) return;
     }
@@ -135,7 +239,27 @@ export default function FormCreationPage() {
 
   const updateFieldConfig = (fieldId, key, value) => {
     setSelectedFields(selectedFields.map(f => {
-      return f.field_id === fieldId ? { ...f, [key]: value } : f;
+      if (f.field_id !== fieldId) return f;
+      const next = { ...f, [key]: value };
+      const libraryField = getLibraryField(f);
+      if (!libraryField || (key !== 'field_label' && key !== 'options')) return next;
+
+      // Reverted to the saved wording: it is the saved question again.
+      if (matchesLibraryDefinition(next, libraryField)) {
+        return {
+          ...next,
+          is_core_question: !!libraryField.is_core_question,
+          is_initiative_specific: !!libraryField.is_initiative_specific,
+          scope: libraryField.scope,
+          initiative_id: libraryField.initiative_id,
+        };
+      }
+      // First edit of a saved question: detach it. Later edits keep whatever
+      // the user has since chosen under "Save Question as:".
+      if (matchesLibraryDefinition(f, libraryField)) {
+        return { ...next, is_core_question: false, is_initiative_specific: false, scope: 'common', initiative_id: null };
+      }
+      return next;
     }));
   };
 
@@ -183,7 +307,7 @@ export default function FormCreationPage() {
     if (emptyLabel) return alert('Please enter text for all questions before saving.');
 
     // Check for select/radio/checkbox fields with no options
-    const emptyOptions = selectedFields.find(f => (['select', 'radio', 'checkbox'].includes(f.field_type) || isLikertType(f.field_type)) && (!f.options || f.options.length === 0 || f.options.every(o => !o.trim())));
+    const emptyOptions = selectedFields.find(f => (['select', 'radio', 'checkbox'].includes(f.field_type) || hasFixedOptions(f.field_type)) && (!f.options || f.options.length === 0 || f.options.every(o => !o.trim())));
     if (emptyOptions) return alert(`Please add options for "${emptyOptions.field_label || 'untitled question'}" before saving.`);
 
 
@@ -206,9 +330,11 @@ export default function FormCreationPage() {
             is_initiative_specific: f.is_initiative_specific === true,
             scope: f.scope,
             form_validation_rules: f.validation_rules || undefined,
+            ...(f.help_text ? { help_text: f.help_text } : {}),
             ...(f.options && f.options.length > 0 ? { options: f.options } : {}),
           };
         }),
+        ...(editingTemplateId && loadedUpdatedAt ? { expected_updated_at: loadedUpdatedAt } : {}),
       };
 
       const res = await apiFetch(editingTemplateId ? getEditTemplateUrl(editingTemplateId) : '/api/surveys/templates', {
@@ -218,11 +344,12 @@ export default function FormCreationPage() {
       });
 
       const result = await res.json();
+      if (res.status === 409 && result.conflict) {
+        if (confirm(`${result.error}\n\nReload now? Your unsaved changes will be lost.`)) window.location.reload();
+        return;
+      }
       if (!res.ok) throw new Error(result.error || 'Unknown error');
-      const deletedAnswers = result.revision?.deletedAnswerCount || 0;
-      alert(editingTemplateId
-        ? `Form updated successfully!${deletedAnswers > 0 ? ` ${deletedAnswers} response${deletedAnswers !== 1 ? 's' : ''} to removed questions were deleted.` : ''}`
-        : 'Form created successfully!');
+      alert(editingTemplateId ? describeRevision(result.revision) : 'Form created successfully!');
       if (editingTemplateId) {
         router.push(`/manage-surveys/${editingTemplateId}`);
         return;
@@ -297,6 +424,8 @@ export default function FormCreationPage() {
           {selectedFields.map((sf) => {
             const idx = selectedFields.indexOf(sf);
             const typeDef = QUESTION_TYPE_DEFS.find(t => t.type === sf.field_type) || { label: sf.field_type, icon: '?' };
+            const libraryField = getLibraryField(sf);
+            const isSavedQuestion = isUneditedLibraryQuestion(sf);
             return (
               <div
                 key={sf.field_id}
@@ -334,6 +463,19 @@ export default function FormCreationPage() {
                     <span style={{ fontSize: '12px', fontWeight: '600', padding: '2px 8px', borderRadius: '9999px', backgroundColor: '#FFF7ED', color: '#E67E22', border: '1px solid #FED7AA' }}>
                       {typeDef.icon} {typeDef.label}
                     </span>
+                    {isSavedQuestion && (
+                      <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '9999px', backgroundColor: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' }}>
+                        {libraryField.is_core_question ? 'Saved core question' : 'Saved initiative question'}
+                      </span>
+                    )}
+                    {libraryField && !isSavedQuestion && (
+                      <span
+                        title="This copy no longer matches the saved question. Tick an option under “Save Question as:” to save it as a new entry."
+                        style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '9999px', backgroundColor: '#F3F4F6', color: '#6B7280', border: '1px solid #E5E7EB' }}
+                      >
+                        Edited: no longer a saved question
+                      </span>
+                    )}
                     {sf.scope === 'initiative_specific' && (
                       <span style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '9999px', backgroundColor: '#EFF6FF', color: '#2563EB' }}>initiative</span>
                     )}
@@ -378,7 +520,7 @@ export default function FormCreationPage() {
                   )}
 
                   {/* Options editor for select/radio/checkbox */}
-                  {(['select', 'radio', 'checkbox'].includes(sf.field_type) || isLikertType(sf.field_type)) && (
+                  {(['select', 'radio', 'checkbox'].includes(sf.field_type) || hasFixedOptions(sf.field_type)) && (
                     <div style={{ marginTop: '8px' }}>
                       <div style={{ fontSize: '12px', fontWeight: 600, color: '#6B7280', marginBottom: '6px' }}>
                         Answer Options
@@ -386,11 +528,11 @@ export default function FormCreationPage() {
                       {(sf.options || []).map((opt, optIdx) => (
                         <div key={optIdx} style={{ display: 'flex', gap: '6px', marginBottom: '4px', alignItems: 'center' }}>
                           <span style={{ color: '#D1D5DB', fontSize: '14px', flexShrink: 0 }}>
-                            {sf.field_type === 'radio' ? '○' : sf.field_type === 'checkbox' ? '☐' : '•'}
+                            {sf.field_type === 'radio' || sf.field_type === 'yesno' ? '○' : sf.field_type === 'checkbox' ? '☐' : '•'}
                           </span>
                           <input
                             value={opt}
-                            disabled={isLikertType(sf.field_type)}
+                            disabled={hasFixedOptions(sf.field_type)}
                             onChange={(e) => {
                               const newOpts = [...(sf.options || [])];
                               newOpts[optIdx] = e.target.value;
@@ -400,7 +542,7 @@ export default function FormCreationPage() {
                           />
                           <button
                             type="button"
-                            disabled={isLikertType(sf.field_type)}
+                            disabled={hasFixedOptions(sf.field_type)}
                             onClick={() => {
                               const newOpts = (sf.options || []).filter((_, i) => i !== optIdx);
                               updateFieldConfig(sf.field_id, 'options', newOpts);
@@ -409,7 +551,7 @@ export default function FormCreationPage() {
                           >x</button>
                         </div>
                       ))}
-                      {!isLikertType(sf.field_type) && <button
+                      {!hasFixedOptions(sf.field_type) && <button
                         type="button"
                         onClick={() => {
                           const newOpts = [...(sf.options || []), `Option ${(sf.options || []).length + 1}`];
@@ -422,34 +564,6 @@ export default function FormCreationPage() {
 
                   {/* Config row */}
                   <div style={{ display: 'flex', gap: '12px', marginTop: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <label
-                      style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280' }}
-                      title={savedQuestionIds.has(sf.field_id) ? 'The type of an existing question cannot be changed' : undefined}
-                    >
-                      Type
-                      <select
-                        value={sf.field_type}
-                        disabled={savedQuestionIds.has(sf.field_id)}
-                        onChange={event => {
-                          const nextType = event.target.value;
-                          const needsOptions = ['select', 'radio', 'checkbox'].includes(nextType) || isLikertType(nextType);
-                          setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
-                            ...field,
-                            field_type: nextType,
-                            options: isLikertType(nextType)
-                              ? getLikertLabels(nextType)
-                              : needsOptions
-                              ? (!field.options || field.options.length === 0 ? ['Option 1', 'Option 2'] : field.options)
-                              : [],
-                          } : field));
-                        }}
-                        style={{ padding: '3px 6px', border: '1px solid #E5E7EB', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontSize: '12px' }}
-                      >
-                        {QUESTION_TYPE_DEFS.map(definition => (
-                          <option key={definition.type} value={definition.type}>{definition.label}</option>
-                        ))}
-                      </select>
-                    </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: sf.required ? '#DC2626' : '#6B7280', cursor: 'pointer', fontWeight: sf.required ? 600 : 400 }}>
                       <input
                         type="checkbox"
@@ -459,11 +573,16 @@ export default function FormCreationPage() {
                       />
                       Required
                     </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: libraryFieldIds.has(sf.field_id) ? 'default' : 'pointer' }}>
+                  </div>
+
+                  {/* Save-as row: neither box ticked keeps it a regular (common) question */}
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>Save Question as:</span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: isSavedQuestion ? 'default' : 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={sf.is_core_question === true}
-                        disabled={libraryFieldIds.has(sf.field_id)}
+                        disabled={isSavedQuestion}
                         onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
                           ...field,
                           is_core_question: e.target.checked,
@@ -475,11 +594,11 @@ export default function FormCreationPage() {
                       />
                       Core question
                     </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: libraryFieldIds.has(sf.field_id) ? 'default' : 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#6B7280', cursor: isSavedQuestion ? 'default' : 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={sf.is_initiative_specific === true}
-                        disabled={libraryFieldIds.has(sf.field_id) || !selectedInitiative}
+                        disabled={isSavedQuestion || !selectedInitiative}
                         onChange={e => setSelectedFields(fields => fields.map(field => field.field_id === sf.field_id ? {
                           ...field,
                           is_initiative_specific: e.target.checked,
@@ -498,7 +617,7 @@ export default function FormCreationPage() {
                   type="button"
                   onClick={() => removeField(sf.field_id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', fontSize: '18px', padding: '0', flexShrink: 0 }}
-                  title={savedQuestionIds.has(sf.field_id) ? 'Remove question (deletes its responses when saved)' : 'Remove question'}
+                  title={savedQuestionIds.has(sf.field_id) ? 'Remove question (retired when saved; its responses are kept)' : 'Remove question'}
                 >×</button>
               </div>
             );
@@ -514,8 +633,7 @@ export default function FormCreationPage() {
             cursor: 'default',
             marginBottom: '8px',
           }}>
-            <span style={{ fontSize: '20px', display: 'block', marginBottom: '4px' }}>+</span>
-            <span style={{ fontSize: '13px' }}> Create a Question or Select a Saved Question Using the Palette on the Right</span>
+            <span style={{ fontSize: '13px' }}>Add a question to the survey by creating a new question or using a saved core or initiative question.</span>
           </div>
         </div>
 
@@ -663,7 +781,7 @@ export default function FormCreationPage() {
                       type="button"
                       onClick={() => {
                         const syntheticId = `synthetic-${t.type}-${Date.now()}`;
-                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type) || isLikertType(t.type);
+                        const needsOptions = ['select', 'radio', 'checkbox'].includes(t.type) || hasFixedOptions(t.type);
                         setSelectedFields(prev => [...prev, {
                           field_id: syntheticId,
                           field_key: t.type,
@@ -674,7 +792,7 @@ export default function FormCreationPage() {
                           is_core_question: false,
                           is_initiative_specific: false,
                           validation_rules: null,
-                          options: isLikertType(t.type) ? getLikertLabels(t.type) : needsOptions ? ['Option 1', 'Option 2'] : [],
+                          options: hasFixedOptions(t.type) ? getFixedOptionLabels(t.type) : needsOptions ? ['Option 1', 'Option 2'] : [],
                         }]);
                       }}
                       style={{
@@ -773,6 +891,58 @@ export default function FormCreationPage() {
               );
             })()}
           </div>
+
+          {/* Retired questions (edit mode): removed in earlier edits, answers kept */}
+          {editingTemplateId && retiredError && (
+            <div className="card" style={{ padding: '12px 16px', color: '#b91c1c', backgroundColor: '#fef2f2', border: '1px solid #fecaca', fontSize: '13px' }}>
+              {retiredError}
+            </div>
+          )}
+          {editingTemplateId && retiredQuestions.length > 0 && (
+            <div className="card" style={{ padding: '20px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' }}>
+                Retired Questions ({retiredQuestions.length})
+              </h3>
+              <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '0 0 12px' }}>
+                Removed from this survey. Their responses are kept and still appear in reports.
+                Unretire to put one back (restored when you save), or delete it permanently.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {retiredQuestions.map(question => {
+                  const pending = selectedFields.some(sf => sf.field_id === question.fieldId);
+                  const typeLabel = QUESTION_TYPE_DEFS.find(t => t.type === question.type)?.label || question.type;
+                  const deleting = deletingRetiredId === question.rootFieldId;
+                  return (
+                    <div key={question.rootFieldId} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
+                      border: '1px solid #E5E7EB', borderRadius: '6px', fontSize: '12px', opacity: pending ? 0.6 : 1,
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: '#111827', overflowWrap: 'anywhere' }}>{pending && '✓ '}{question.label}</div>
+                        <div style={{ color: '#6B7280', marginTop: '2px' }}>
+                          {typeLabel} · {question.answerCount} response{question.answerCount === 1 ? '' : 's'}
+                          {pending && ' · restored on save'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => unretireQuestion(question)}
+                        disabled={pending || deleting}
+                        style={{ padding: '4px 8px', border: '1px solid #E5E7EB', borderRadius: '6px', background: '#fff', color: '#E67E22', fontSize: '12px', fontWeight: 600, cursor: pending ? 'default' : 'pointer' }}
+                      >Unretire</button>
+                      <button
+                        type="button"
+                        onClick={() => deleteRetiredQuestion(question)}
+                        disabled={pending || deleting}
+                        title={pending ? 'Remove it from the form first' : 'Permanently delete this question and its responses'}
+                        style={{ padding: '4px 8px', border: '1px solid #FECACA', borderRadius: '6px', background: '#fff', color: '#DC2626', fontSize: '12px', fontWeight: 600, cursor: pending || deleting ? 'default' : 'pointer' }}
+                      >{deleting ? 'Deleting…' : 'Delete'}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </PageLayout>

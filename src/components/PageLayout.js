@@ -7,11 +7,13 @@ import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import PublicSiteHeader from '@/components/PublicSiteHeader';
 
-export default function PageLayout({ title, children, requireAuth = true, requireRole = null }) {
+// publicShell: always use the public site header (no sidebar), even for logged-in
+// users. Only applies to public pages (requireAuth={false}).
+export default function PageLayout({ title, children, requireAuth = true, requireRole = null, publicShell = false }) {
   const router = useRouter();
   const { user, hydrated } = useAuthStore();
 
-  const usePublicShell = !requireAuth && !user && hydrated;
+  const usePublicShell = !requireAuth && hydrated && (publicShell || !user);
 
   useEffect(() => {
     if (!hydrated || !requireAuth) return;
@@ -20,7 +22,7 @@ export default function PageLayout({ title, children, requireAuth = true, requir
       return;
     }
     if (requireRole && user.user_type !== requireRole) {
-      router.push('/');
+      router.push('/dashboard');
     }
   }, [hydrated, requireAuth, requireRole, router, user]);
 
@@ -43,7 +45,7 @@ export default function PageLayout({ title, children, requireAuth = true, requir
     <div className="page-layout">
       <Sidebar />
       <div className="main-content">
-        <TopBar title={title} />
+        <TopBar />
         <div className="content-area">
           {children}
         </div>

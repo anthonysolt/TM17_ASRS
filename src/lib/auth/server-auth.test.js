@@ -146,6 +146,54 @@ describe('server-auth helper', () => {
     vi.useRealTimers();
   });
 
+  describe('session last_seen_at refresh is throttled to once a minute', () => {
+    const NOW = '2026-03-05T12:00:00.000Z';
+
+    // Runs requireAuth for a valid session whose last_seen_at is `lastSeen`;
+    // returns the UPDATE session ... last_seen_at calls it made.
+    function touchesFor(lastSeen) {
+      process.env.NODE_ENV = 'development';
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW));
+      const touches = [];
+      const db = {
+        prepare: vi.fn((sql) => {
+          if (sql.includes('WHERE s.token_hash = ?')) {
+            return { get: vi.fn(() => ({
+              session_id: 3, user_id: 9, csrf_token: 'abc',
+              expires_at: '2026-03-05T18:00:00.000Z',
+              absolute_expires_at: '2026-03-10T00:00:00.000Z',
+              revoked_at: null, last_seen_at: lastSeen,
+              first_name: 'A', last_name: 'B', email: 'a@x.com', verified: 1, user_type: 'staff', access_rank: 50,
+            })) };
+          }
+          if (sql.includes('SET last_seen_at')) return { run: vi.fn((...args) => touches.push(args)) };
+          return { run: vi.fn(), get: vi.fn(), all: vi.fn(() => []) };
+        }),
+      };
+      const req = new Request('http://localhost:3000/api/x', { headers: { cookie: `${SESSION_COOKIE_NAME}=tok` } });
+      const auth = requireAuth(req, db, { requireCsrf: false });
+      vi.useRealTimers();
+      expect(auth.user.email).toBe('a@x.com');
+      return touches;
+    }
+
+    test('skips the write when the session was seen under 60 seconds ago', () => {
+      expect(touchesFor('2026-03-05T11:59:01.000Z')).toHaveLength(0);
+    });
+
+    test('writes once 60 seconds have passed, extending the idle expiry by 8 hours', () => {
+      const touches = touchesFor('2026-03-05T11:59:00.000Z');
+      expect(touches).toHaveLength(1);
+      expect(touches[0]).toEqual([NOW, '2026-03-05T20:00:00.000Z', 3]);
+    });
+
+    test('writes when last_seen_at is missing or unparseable', () => {
+      expect(touchesFor(null)).toHaveLength(1);
+      expect(touchesFor('not a date')).toHaveLength(1);
+    });
+  });
+
   test('cookie helpers set and clear cookies and token extraction works', () => {
     const response = { cookies: { set: vi.fn() } };
     applySessionCookies(response, 'token', 'csrf');

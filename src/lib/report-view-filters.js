@@ -24,38 +24,34 @@ export function getReportFilterColumns(rows = []) {
   return columns;
 }
 
-export function filterReportRows(rows = [], filters = {}) {
-  return rows.filter(row => Object.entries(filters).every(([column, expected]) => {
-    if (expected === '' || expected === null || expected === undefined || expected === 'All') return true;
-    const rowColumn = findReportColumn(row, column);
-    if (!rowColumn) return false;
-    return String(row[rowColumn] ?? '').trim().toLowerCase() === String(expected).trim().toLowerCase();
-  }));
-}
-
 export function getReportFilterOptions(rows = [], columns = []) {
   return Object.fromEntries(columns.map(column => {
     const values = rows.map(row => {
       const rowColumn = findReportColumn(row, column);
       return rowColumn ? row[rowColumn] : null;
-    }).filter(value => value !== null && value !== undefined && value !== '');
+    }).flat().filter(value => value !== null && value !== undefined && value !== '');
     return [column, [...new Set(values.map(String))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
   }));
 }
 
-export function buildFilteredChartData(rows = []) {
-  const chartData = {};
-  getReportFilterColumns(rows).forEach(column => {
-    const counts = new Map();
-    rows.forEach(row => {
-      const value = row[column];
-      if (value === null || value === undefined || value === '') return;
-      const label = String(value);
-      counts.set(label, (counts.get(label) || 0) + 1);
-    });
-    if (counts.size > 0 && counts.size <= 25) {
-      chartData[column] = [...counts.entries()].map(([name, value]) => ({ name, value }));
-    }
-  });
-  return chartData;
+export const QUESTION_FILTER_SCOPE_LABELS = {
+  report: 'Report filter',
+  question: 'Question filter',
+};
+
+export function describeQuestionFilterScope(filter) {
+  return (QUESTION_FILTER_SCOPE_LABELS[filter?.scope] || QUESTION_FILTER_SCOPE_LABELS.report).toLowerCase();
+}
+
+export function describeQuestionFilter(filter) {
+  if (!filter) return '';
+  if (Array.isArray(filter.values)) {
+    return filter.values.length > 0 ? `is ${filter.values.join(' or ')}` : '';
+  }
+  const hasMin = Number.isFinite(filter.min);
+  const hasMax = Number.isFinite(filter.max);
+  if (hasMin && hasMax) return `between ${filter.min} and ${filter.max}`;
+  if (hasMin) return `at least ${filter.min}`;
+  if (hasMax) return `at most ${filter.max}`;
+  return '';
 }

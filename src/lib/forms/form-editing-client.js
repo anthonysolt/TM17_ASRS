@@ -30,6 +30,13 @@ export function templateToEditableForm(template, requiredFields = []) {
   };
 }
 
+// Page that opens the form builder in edit mode. Link here directly rather than
+// through /manage-surveys/[id]/edit: that route's server redirect trips a
+// dev-only React performance error ("Performance.measure ... end cannot be negative").
+export function getFormBuilderEditPath(templateId) {
+  return `/form-creation?edit=${encodeURIComponent(templateId)}`;
+}
+
 export function getEditTemplateUrl(templateId) {
   return `/api/surveys/templates/${encodeURIComponent(templateId)}`;
 }

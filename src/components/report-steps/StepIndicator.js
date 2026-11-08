@@ -3,8 +3,9 @@
 const STEPS = [
   { label: 'Configuration', icon: '1' },
   { label: 'Questions', icon: '2' },
-  { label: 'Goals', icon: '3' },
-  { label: 'Preview & Generate', icon: '4' },
+  { label: 'Filters', icon: '3' },
+  { label: 'Goals', icon: '4' },
+  { label: 'Preview & Generate', icon: '5' },
 ];
 
 export default function StepIndicator({ currentStep }) {

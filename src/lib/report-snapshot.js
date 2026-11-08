@@ -1,3 +1,6 @@
+import { isQuestionFilterActive } from '@/lib/report-engine';
+import { getReportDateRange } from '@/lib/report-date-range';
+
 function ensureObject(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
@@ -111,8 +114,11 @@ export function parseReportForDashboard(report) {
       summary: results.summary,
       chartData: results.chartData,
       tableData: results.filteredTableData,
+      ...getStoredRowInfo(results),
       explainability: results.explainability,
       goals: results.goals,
+      questionFilters: getAppliedQuestionFilters(normalized.config),
+      dateRange: getReportDateRange(normalized.config),
     },
     trendData: results.trendData || [],
     aiInsights: results.aiInsights || null,
@@ -121,4 +127,20 @@ export function parseReportForDashboard(report) {
       name: results.initiativeName,
     },
   };
+}
+
+/**
+ * How many rows a report matched and whether the snapshot stores only the first
+ * of them (reports keep at most 500; see src/lib/reports/report-rows.js).
+ * Older snapshots stored every row, so their count is the stored length.
+ */
+export function getStoredRowInfo(results) {
+  const stored = ensureArray(results?.filteredTableData).length;
+  const rawCount = results?.tableRowCount;
+  const total = rawCount != null && rawCount !== '' && Number.isFinite(Number(rawCount)) ? Number(rawCount) : stored;
+  return { tableRowCount: total, tableRowsTruncated: Boolean(results?.tableRowsTruncated) && total > stored };
+}
+
+export function getAppliedQuestionFilters(config) {
+  return ensureArray(config?.questionSelections).filter((selection) => isQuestionFilterActive(selection?.filter));
 }

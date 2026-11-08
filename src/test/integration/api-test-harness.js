@@ -90,6 +90,7 @@ export function createTestDb() {
       scoring_method TEXT NOT NULL DEFAULT 'linear',
       source_root_field_id INTEGER,
       source_method TEXT,
+      source_answer TEXT,
       deadline TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
@@ -103,6 +104,17 @@ export function createTestDb() {
       description TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE initiative_member (
+      member_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      initiative_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'participant',
+      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE,
+      UNIQUE(initiative_id, user_id)
     );
 
     CREATE TABLE initiative_category (
@@ -204,18 +216,22 @@ export function createTestDb() {
       FOREIGN KEY (field_id) REFERENCES field(field_id) ON DELETE CASCADE
     );
 
-    CREATE TABLE surveys (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL,
-      responses TEXT NOT NULL,
-      submitted_at TEXT DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE survey_distribution (
+      distribution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_template_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      start_date TEXT NOT NULL DEFAULT '',
+      end_date TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      recipient_emails TEXT NOT NULL DEFAULT '[]',
+      response_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_by_user_id INTEGER
     );
 
     CREATE TABLE reports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       initiative_id INTEGER,
-      survey_id INTEGER,
       name TEXT,
       description TEXT,
       status TEXT,
@@ -231,8 +247,7 @@ export function createTestDb() {
       data_snapshot_json TEXT,
       trends_json TEXT,
       display_order INTEGER DEFAULT 0,
-      FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id),
-      FOREIGN KEY (survey_id) REFERENCES surveys(id)
+      FOREIGN KEY (initiative_id) REFERENCES initiative(initiative_id)
     );
 
     CREATE TABLE qr_codes (

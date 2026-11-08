@@ -1,6 +1,7 @@
 'use client';
 
 import PageLayout from '@/components/PageLayout';
+import TabBar from '@/components/TabBar';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
@@ -72,7 +73,7 @@ export default function AdminUsersPage() {
       return;
     }
     if (user.user_type !== 'admin' && !user.permissions?.includes('users.manage')) {
-      router.push('/');
+      router.push('/dashboard');
     }
   }, [router, user, hydrated]);
 
@@ -347,6 +348,32 @@ export default function AdminUsersPage() {
 
   return (
     <PageLayout title="User Management">
+      {/* ── Page header (same layout as the Reports / Surveys pages) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#111827', margin: 0 }}>User Management</h2>
+        <button
+          type="button"
+          onClick={() => {
+            if (activeTab === 'users') { setShowAddForm(true); setAddError(''); }
+            else { setShowCreateRole(true); setRolesError(''); }
+          }}
+          className="btn-primary btn-create"
+        >
+          {activeTab === 'users' ? 'Add User' : 'Create Role'}
+        </button>
+      </div>
+
+      {/* ── Tab bar (shared with the Reports / initiative / survey pages) ── */}
+      <TabBar
+        ariaLabel="User management sections"
+        tabs={[
+          { key: 'users', label: 'Users' },
+          { key: 'roles', label: 'Roles & Permissions' },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
+
       {/* Stats Row */}
       <div className="stats-row" style={{ marginBottom: '1.5rem' }}>
         <div className="stat-card">
@@ -366,47 +393,6 @@ export default function AdminUsersPage() {
           <div className="stat-value">{staffCount}</div>
         </div>
       </div>
-
-      {/* Tab Bar + Action Button */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0', flexWrap: 'wrap', gap: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0', borderBottom: '2px solid #E5E7EB' }}>
-          <button
-            onClick={() => setActiveTab('users')}
-            style={{
-              padding: '0.6rem 1.5rem', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
-              border: 'none', backgroundColor: 'transparent',
-              borderBottom: activeTab === 'users' ? '2px solid #E67E22' : '2px solid transparent',
-              color: activeTab === 'users' ? '#111827' : '#6B7280',
-              marginBottom: '-2px',
-            }}
-          >
-            Users
-          </button>
-          <button
-            onClick={() => setActiveTab('roles')}
-            style={{
-              padding: '0.6rem 1.5rem', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
-              border: 'none', backgroundColor: 'transparent',
-              borderBottom: activeTab === 'roles' ? '2px solid #E67E22' : '2px solid transparent',
-              color: activeTab === 'roles' ? '#111827' : '#6B7280',
-              marginBottom: '-2px',
-            }}
-          >
-            Roles & Permissions
-          </button>
-        </div>
-        <button
-          onClick={() => {
-            if (activeTab === 'users') { setShowAddForm(true); setAddError(''); }
-            else { setShowCreateRole(true); setRolesError(''); }
-          }}
-          className="btn-primary"
-        >
-          {activeTab === 'users' ? '+ Add User' : '+ Create Role'}
-        </button>
-      </div>
-
-      <div style={{ marginBottom: '1.5rem' }} />
 
       {/* Success Message */}
       {successMsg && (

@@ -36,5 +36,7 @@ describe('/api/reports/:id GET integration', () => {
     expect(res.status).toBe(200);
     expect(payload.report.id).toBe(reportId);
     expect(payload.report.name).toBe('Ops Report');
+    // The detail includes the saved snapshot (the list does not).
+    expect(payload.report).toHaveProperty('report_data');
   });
 });
