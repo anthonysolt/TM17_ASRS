@@ -1,4 +1,4 @@
-import { ANALYSIS_METHOD_VALUES } from '@/lib/analysis-methods';
+import { QUESTION_METHOD_VALUES, methodNeedsAnswer } from '@/lib/analysis-methods';
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -113,15 +113,21 @@ export function validateReportCreatePayload(body) {
     if (questionIds.has(id)) {
       return { valid: false, error: 'A survey question cannot be selected more than once' };
     }
-    if (!ANALYSIS_METHOD_VALUES.includes(method)) {
+    if (!QUESTION_METHOD_VALUES.includes(method)) {
       return { valid: false, error: 'Invalid question analysis method' };
+    }
+    let answer = null;
+    if (methodNeedsAnswer(method)) {
+      answer = typeof selection.answer === 'string' ? selection.answer.trim() : '';
+      if (!answer) return { valid: false, error: 'Choose the target answer for each answer-based analysis method' };
+      if (answer.length > 200) return { valid: false, error: 'Target answer cannot be longer than 200 characters' };
     }
     const filterValidation = validateQuestionFilter(selection.filter);
     if (!filterValidation.valid) {
       return { valid: false, error: filterValidation.error };
     }
     questionIds.add(id);
-    questionSelections.push({ id, method, thresholdPct: 2, filter: filterValidation.value });
+    questionSelections.push({ id, method, thresholdPct: 2, filter: filterValidation.value, ...(answer ? { answer } : {}) });
   }
 
   // Goals are optional; each id must belong to the initiative (checked in the route).

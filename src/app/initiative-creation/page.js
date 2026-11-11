@@ -165,7 +165,7 @@ function InitiativeCreationContent() {
               <thead>
                 <tr>
                   <th>Initiative</th>
-                  <th>Avg Score</th>
+                  <th>Goal %</th>
                   <th>Last Updated</th>
                   <th>Submissions</th>
                   <th>Members</th>
@@ -185,7 +185,9 @@ function InitiativeCreationContent() {
                           <InitiativeNameLink initiative={initiative} />
                         ) : initiative.name}
                       </td>
-                      <td style={{ color: '#6B7280' }}>{(initiative.avg_score ?? 0).toFixed(1)}</td>
+                      <td style={{ color: '#6B7280' }}>
+                        {initiative.overall_score == null ? '—' : `${Math.round(initiative.overall_score * 10) / 10}%`}
+                      </td>
                       <td style={{ color: '#6B7280' }}>{formatDate(initiative.updated_at || initiative.created_at)}</td>
                       <td style={{ color: '#6B7280' }}>{initiative.submission_count ?? '—'}</td>
                       <td style={{ color: '#6B7280' }}>{initiative.member_count ?? '—'}</td>

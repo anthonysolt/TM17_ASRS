@@ -42,7 +42,7 @@ export default function SurveyList({ templates, responseCounts = {}, allowDelete
       onNotify?.(`Survey template #${templateId} and related submissions deleted successfully.`);
       await onChanged?.();
     } catch (err) {
-      onNotify?.(err.message || 'Unable to delete survey template', 'error');
+      onNotify?.(err.message || 'Unable to delete survey', 'error');
     }
   }
 

@@ -98,7 +98,7 @@ describe('/api/reports branch coverage', () => {
       if (query.includes('INSERT INTO reports')) return { run: () => ({ lastInsertRowid: 7 }) };
       return { get: vi.fn(), run: vi.fn(), all: vi.fn(() => []) };
     });
-    querySelectedQuestionDataMock.mockReturnValue({ tableData: [{ Question: 1 }], questions: [{ field_id: 5, field_label: 'Question', column: 'Question' }] });
+    querySelectedQuestionDataMock.mockReturnValue({ tableData: [{ Question: 1 }], questions: [{ field_id: 5, field_label: 'Question', field_type: 'rating', column: 'Question' }] });
     reportEngineMock.validateTrendConfig.mockReturnValueOnce({ valid: false, error: 'trend bad' });
     expect((await POST(req({ initiativeId: 2 }))).status).toBe(400);
 

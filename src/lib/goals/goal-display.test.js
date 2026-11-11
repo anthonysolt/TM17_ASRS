@@ -21,10 +21,29 @@ const sourcedGoal = {
 describe('goal-display', () => {
   test('status matches the Goals page badges', () => {
     expect(getGoalStatus(manualGoal)).toEqual({ label: 'On Track', pill: 'pill-green' });
-    expect(getGoalStatus({ ...manualGoal, score: 40 }).label).toBe('Not Met');
-    expect(getGoalStatus({ ...manualGoal, score: 100 }).label).toBe('Exceeded');
+    expect(getGoalStatus({ ...manualGoal, current_value: 80, score: 40 }).label).toBe('Not Met');
     expect(getGoalStatus(sourcedGoal).label).toBe('Exceeded');
     expect(getGoalStatus({ ...sourcedGoal, current_value: 4 }).label).toBe('Reached');
+  });
+
+  test('status follows the value against the target, not the capped score', () => {
+    const linear = { scoring_method: 'linear', target_value: 5 };
+    expect(getGoalStatus({ ...linear, current_value: 5, score: 100 })).toEqual({ label: 'Reached', pill: 'pill-green' });
+    expect(getGoalStatus({ ...linear, current_value: 6, score: 100 })).toEqual({ label: 'Exceeded', pill: 'pill-blue' });
+    expect(getGoalStatus({ ...linear, current_value: 4, score: 80 }).label).toBe('On Track');
+    expect(getGoalStatus({ ...linear, current_value: 1, score: 20 }).label).toBe('Not Met');
+
+    // Binary goals below target are not met.
+    const binary = { scoring_method: 'binary', target_value: 6 };
+    expect(getGoalStatus({ ...binary, current_value: 5.1, score: 0 }).label).toBe('Not Met');
+    expect(getGoalStatus({ ...binary, current_value: 6, score: 100 }).label).toBe('Reached');
+    expect(getGoalStatus({ scoring_method: 'binary', target_value: 1, current_value: 1, score: 100 }).label).toBe('Reached');
+  });
+
+  test('falls back to the score when values are missing or the target is not positive', () => {
+    expect(getGoalStatus({ scoring_method: 'linear', target_value: 0, current_value: 3, score: 0 }).label).toBe('Not Met');
+    expect(getGoalStatus({ scoring_method: 'binary', target_value: 0, current_value: 3, score: 100 }).label).toBe('Reached');
+    expect(getGoalStatus({ scoring_method: 'linear', target_value: 10, current_value: null, score: 0 }).label).toBe('Not Met');
   });
 
   test('every download format shares the same goal rows', () => {

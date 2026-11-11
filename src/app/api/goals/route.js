@@ -8,12 +8,20 @@ import {
   performGoalUpdate,
   ALLOWED_FIELDS,
   computeGoalScore,
+  computeOverallScore,
   rebalanceGoalWeights,
+  getTargetValueError,
 } from '@/lib/goals/perform-goal-update';
 import { computeQuestionSourceValue, syncQuestionSourcedGoals } from '@/lib/goals/question-source';
 import { queryInitiativeQuestions } from '@/lib/query-helpers';
 import { sameUpdatedAt } from '@/lib/updated-at';
-import { GOAL_SOURCE_METHOD_VALUES, methodNeedsAnswer } from '@/lib/analysis-methods';
+import {
+  GOAL_SOURCE_METHOD_VALUES,
+  getMethodLabelForQuestionError,
+  isMethodAllowedForQuestion,
+  methodNeedsAnswer,
+  resolveQuestionType,
+} from '@/lib/analysis-methods';
 
 function isValidWeight(weight) {
   const numericWeight = Number(weight);
@@ -28,7 +36,7 @@ function isValidWeight(weight) {
  * Validate an optional question source. Both fields empty means a manual goal.
  * Returns { source: { rootFieldId, method } | null } or { error }.
  */
-function parseQuestionSource(initiativeId, rootFieldId, method, answer) {
+function parseQuestionSource(initiativeId, rootFieldId, method, answer, { unchangedFrom = null } = {}) {
   const hasQuestion = rootFieldId !== undefined && rootFieldId !== null && rootFieldId !== '';
   const hasMethod = method !== undefined && method !== null && method !== '';
   if (!hasQuestion && !hasMethod) return { source: null };
@@ -43,28 +51,21 @@ function parseQuestionSource(initiativeId, rootFieldId, method, answer) {
     return { error: 'Choose the target answer for this method' };
   }
   const questionId = Number(rootFieldId);
-  if (!Number.isInteger(questionId) || queryInitiativeQuestions(db, initiativeId, [questionId]).length === 0) {
+  const [question] = Number.isInteger(questionId) ? queryInitiativeQuestions(db, initiativeId, [questionId]) : [];
+  if (!question) {
     return { error: 'The selected question does not belong to this initiative' };
+  }
+  // A goal saved before methods were limited by question type may keep its
+  // method while other fields are edited; choosing it anew must fit the question.
+  const keepsSavedMethod = unchangedFrom
+    && Number(unchangedFrom.source_root_field_id) === questionId
+    && unchangedFrom.source_method === method;
+  if (!keepsSavedMethod && !isMethodAllowedForQuestion(method, resolveQuestionType(question.field_type, question.validation_rules))) {
+    return { error: getMethodLabelForQuestionError(method, question.field_label || `Question ${questionId}`) };
   }
   return { source: { rootFieldId: questionId, method, answer: targetAnswer || null } };
 }
 
-// Compute overall weighted score across all goals
-function computeOverallScore(goals) {
-  if (goals.length === 0) return 0;
-
-  let weightedSum = 0;
-  let totalWeight = 0;
-
-  for (const goal of goals) {
-    const score = computeGoalScore(goal);
-    weightedSum += score * goal.weight;
-    totalWeight += goal.weight;
-  }
-
-  if (totalWeight === 0) return 0;
-  return parseFloat((weightedSum / totalWeight).toFixed(2));
-}
 
 // Calculate days until deadline
 function getDaysUntilDeadline(deadline) {
@@ -171,6 +172,11 @@ export async function POST(request) {
       );
     }
 
+    const targetError = getTargetValueError(target_value, scoring_method);
+    if (targetError) {
+      return NextResponse.json({ error: targetError }, { status: 400 });
+    }
+
     // Weight must stay within the percentage range.
     if (!isValidWeight(weight)) {
       return NextResponse.json(
@@ -185,9 +191,12 @@ export async function POST(request) {
     }
     const { source } = parsedSource;
     // A question-sourced goal starts from the computed value, not a typed one.
-    const startingValue = source
-      ? (computeQuestionSourceValue(db, initiative_id, source.rootFieldId, source.method, source.answer).value ?? 0)
-      : (current_value || 0);
+    const sourcedValue = source
+      ? computeQuestionSourceValue(db, initiative_id, source.rootFieldId, source.method, source.answer).value
+      : null;
+    // No responses yet: start at 0, but don't record that 0 as measured progress.
+    const hasStartingData = !source || sourcedValue !== null;
+    const startingValue = source ? (sourcedValue ?? 0) : (current_value || 0);
 
     // Verify initiative exists
     const initiative = db.prepare(
@@ -227,16 +236,18 @@ export async function POST(request) {
     const newGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(createdGoal.goal_id);
 
     // Record initial progress snapshot
-    db.prepare(`
-      INSERT INTO goal_progress_history (goal_id, initiative_id, recorded_value, target_value, score)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(
-      newGoal.goal_id,
-      newGoal.initiative_id,
-      newGoal.current_value,
-      newGoal.target_value,
-      parseFloat(computeGoalScore(newGoal).toFixed(2))
-    );
+    if (hasStartingData) {
+      db.prepare(`
+        INSERT INTO goal_progress_history (goal_id, initiative_id, recorded_value, target_value, score)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        newGoal.goal_id,
+        newGoal.initiative_id,
+        newGoal.current_value,
+        newGoal.target_value,
+        parseFloat(computeGoalScore(newGoal).toFixed(2))
+      );
+    }
 
     // ── Audit log ──
     logAudit(db, {
@@ -314,7 +325,8 @@ export async function PUT(request) {
         existing.initiative_id,
         proposedPatch.source_root_field_id !== undefined ? proposedPatch.source_root_field_id : existing.source_root_field_id,
         proposedPatch.source_method !== undefined ? proposedPatch.source_method : existing.source_method,
-        proposedPatch.source_answer !== undefined ? proposedPatch.source_answer : existing.source_answer
+        proposedPatch.source_answer !== undefined ? proposedPatch.source_answer : existing.source_answer,
+        { unchangedFrom: existing }
       );
       if (parsedSource.error) {
         return NextResponse.json({ error: parsedSource.error }, { status: 400 });
@@ -327,6 +339,14 @@ export async function PUT(request) {
       ? proposedPatch.source_root_field_id
       : existing.source_root_field_id) != null;
     if (isSourced) delete proposedPatch.current_value;
+
+    if (proposedPatch.target_value !== undefined || proposedPatch.scoring_method !== undefined) {
+      const targetError = getTargetValueError(
+        proposedPatch.target_value !== undefined ? proposedPatch.target_value : existing.target_value,
+        proposedPatch.scoring_method !== undefined ? proposedPatch.scoring_method : existing.scoring_method
+      );
+      if (targetError) return NextResponse.json({ error: targetError }, { status: 400 });
+    }
 
     if (Object.keys(proposedPatch).length === 0) {
       return NextResponse.json(

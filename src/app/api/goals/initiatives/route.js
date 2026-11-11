@@ -8,9 +8,12 @@ export async function GET(request) {
     initializeDatabase();
     const auth = requirePermission(request, db, 'goals.manage');
     if (auth.error) return auth.error;  
-    const initiatives = db.prepare(
-      'SELECT initiative_id, initiative_name FROM initiative ORDER BY initiative_name ASC'
-    ).all();
+    const initiatives = db.prepare(`
+      SELECT i.initiative_id, i.initiative_name,
+        (SELECT COUNT(*) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS goal_count
+      FROM initiative i
+      ORDER BY i.initiative_name ASC
+    `).all();
 
     return NextResponse.json({ initiatives });
   } catch (error) {

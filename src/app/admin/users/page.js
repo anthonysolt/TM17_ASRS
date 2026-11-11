@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth/use-auth-store';
 import { apiFetch } from '@/lib/api/client';
 import ReasonModal from '@/components/ReasonModal';
+import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
+import { entryDeleteButtonStyle } from '@/components/EntryCard';
 
 export default function AdminUsersPage() {
   const router = useRouter();
@@ -129,13 +131,6 @@ export default function AdminUsersPage() {
     setShowReasonModal(true);
   };
 
-  // ── Delete user ───────────────────────────────────────────────────────────
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    setPendingAction({ type: 'delete', user: deleteTarget });
-    setShowReasonModal(true);
-  };
-
   // ── Add new user ──────────────────────────────────────────────────────────
   const handleAddUser = async (e) => {
     e.preventDefault();
@@ -184,7 +179,6 @@ export default function AdminUsersPage() {
         const data = await resp.json();
         if (resp.ok) {
           setSuccessMsg(`${pendingAction.user.first_name} ${pendingAction.user.last_name} has been removed`);
-          setDeleteTarget(null);
           fetchUsers();
         } else {
           setError(data.error || 'Failed to delete user');
@@ -300,12 +294,6 @@ export default function AdminUsersPage() {
     const matchesRole = filterRole === 'all' || u.user_type === filterRole;
     return matchesSearch && matchesRole;
   });
-
-  const getRolePillClass = (role) => {
-    if (role === 'admin') return 'pill-orange';
-    if (role === 'staff') return 'pill-blue';
-    return 'pill-gray';
-  };
 
   const formatRoleName = (type) => type.charAt(0).toUpperCase() + type.slice(1).replace(/_/g, ' ');
 
@@ -483,7 +471,24 @@ export default function AdminUsersPage() {
                           <td>{u.email}</td>
                           <td>{u.phone_number || '—'}</td>
                           <td>
-                            <span className={getRolePillClass(u.user_type)}>{formatRoleName(u.user_type)}</span>
+                            <select
+                              value={u.user_type}
+                              onChange={(e) => handleRoleChange(u.user_id, e.target.value)}
+                              disabled={isSelf}
+                              title={isSelf ? 'You cannot change your own role' : 'Change role'}
+                              aria-label={`Role for ${u.email}`}
+                              style={{
+                                ...selectSt,
+                                fontSize: '0.8rem',
+                                padding: '0.3rem 0.5rem',
+                                opacity: isSelf ? 0.5 : 1,
+                                cursor: isSelf ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {roles.map((r) => (
+                                <option key={r.user_type_id} value={r.type}>{formatRoleName(r.type)}</option>
+                              ))}
+                            </select>
                           </td>
                           <td>
                             {u.verified ? (
@@ -494,33 +499,14 @@ export default function AdminUsersPage() {
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', alignItems: 'center' }}>
-                              <select
-                                value={u.user_type}
-                                onChange={(e) => handleRoleChange(u.user_id, e.target.value)}
-                                disabled={isSelf}
-                                style={{
-                                  ...selectSt,
-                                  fontSize: '0.8rem',
-                                  padding: '0.3rem 0.5rem',
-                                  opacity: isSelf ? 0.5 : 1,
-                                  cursor: isSelf ? 'not-allowed' : 'pointer',
-                                }}
-                              >
-                                {roles.map((r) => (
-                                  <option key={r.user_type_id} value={r.type}>{formatRoleName(r.type)}</option>
-                                ))}
-                              </select>
                               <button
                                 onClick={() => setDeleteTarget(u)}
                                 disabled={isSelf}
                                 title={isSelf ? 'Cannot delete your own account' : 'Delete user'}
+                                type="button"
                                 style={{
-                                  padding: '0.3rem 0.75rem', borderRadius: '6px',
-                                  fontSize: '0.8rem', fontWeight: '600',
-                                  backgroundColor: isSelf ? '#F9FAFB' : '#FEE2E2',
-                                  color: isSelf ? '#D1D5DB' : '#991B1B',
-                                  border: `1px solid ${isSelf ? '#E5E7EB' : '#FECACA'}`,
-                                  cursor: isSelf ? 'not-allowed' : 'pointer',
+                                  ...entryDeleteButtonStyle,
+                                  ...(isSelf ? { opacity: 0.5, cursor: 'not-allowed' } : {}),
                                 }}
                               >
                                 Delete
@@ -677,49 +663,19 @@ export default function AdminUsersPage() {
         </>
       )}
 
-      {/* ── Delete Confirmation Modal ──────────────────────────────────────── */}
-      {deleteTarget && (
-        <div style={overlayStyle} onClick={() => setDeleteTarget(null)}>
-          <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: '#111827', margin: '0 0 0.5rem 0' }}>
-              Confirm Deletion
-            </h2>
-            <p style={{ color: '#6B7280', fontSize: '0.95rem', marginBottom: '0.75rem' }}>
-              Are you sure you want to delete this user? This action cannot be undone.
-            </p>
-            <div style={{
-              padding: '0.75rem 1rem', backgroundColor: '#F9FAFB',
-              borderRadius: '8px', marginBottom: '1.5rem', fontSize: '0.9rem', border: '1px solid #E5E7EB',
-            }}>
-              <strong>{deleteTarget.first_name} {deleteTarget.last_name}</strong>
-              <br />
-              <span style={{ color: '#6B7280' }}>{deleteTarget.email}</span>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="btn-outline"
-                style={{ padding: '0.5rem 1.25rem' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setPendingAction({ type: 'delete', user: deleteTarget });
-                  setShowReasonModal(true);
-                }}
-                style={{
-                  padding: '0.5rem 1.25rem', borderRadius: '8px',
-                  border: '1px solid #EF4444', backgroundColor: '#EF4444',
-                  color: 'white', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer',
-                }}
-              >
-                Delete User
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Delete Confirmation Modal: confirming hands the user to the reason prompt ── */}
+      <ConfirmDeleteModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          setPendingAction({ type: 'delete', user: deleteTarget });
+          setDeleteTarget(null);
+          setShowReasonModal(true);
+        }}
+        itemName={deleteTarget?.email}
+        title={`Delete ${[deleteTarget?.first_name, deleteTarget?.last_name].filter(Boolean).join(' ') || 'user'}?`}
+        warning="This permanently deletes the user account and removes their access."
+      />
 
       <ReasonModal
         open={showReasonModal}

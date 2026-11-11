@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import PageLayout from '@/components/PageLayout';
 import InitiativeReportLinks from '@/components/InitiativeReportLinks';
@@ -10,13 +9,6 @@ import { apiFetch } from '@/lib/api/client';
 import { getInitiativeReportsPath } from '@/lib/initiative-slug';
 import { normalizeInitiativeStatus } from '@/lib/initiative-status';
 import { fetchResponseCounts, responseCountFor } from '@/lib/surveys/survey-admin-client';
-
-const QUICK_ACTIONS = [
-  { href: '/initiatives/new', icon: '📋', title: 'Create Initiative',   description: 'Set up a new initiative and configure scoring' },
-  { href: '/report-creation',     icon: '📊', title: 'Generate Report',     description: 'Build and publish a new initiative report' },
-  { href: '/survey-distribution', icon: '📤', title: 'Distribute Survey',   description: 'Send surveys to initiative participants' },
-  { href: '/goals',               icon: '🎯', title: 'Review Goals',        description: 'Update scoring targets and criteria' },
-];
 
 function formatDate(dateStr) {
   if (!dateStr) return '—';
@@ -227,15 +219,6 @@ export default function DashboardPage() {
           </h2>
           <p style={{ color: '#6B7280', fontSize: 13, marginTop: 4 }}>{dateStr}</p>
         </div>
-      </div>
-
-      {/* ── Quick Actions ── */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
-        {QUICK_ACTIONS.map((action, i) => (
-          <Link key={action.href} href={action.href} className={i === 0 ? 'btn-primary' : 'btn-outline'}>
-            {action.title}
-          </Link>
-        ))}
       </div>
 
       {/* ── Initiatives ── */}

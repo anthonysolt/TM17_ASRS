@@ -5,6 +5,7 @@ import { getServiceContainer } from '@/lib/container/service-container';
 import { logAudit } from '@/lib/audit';
 import { toInitiativeCreateInput, toInitiativeDto } from '@/lib/adapters/initiative-adapter';
 import { requireAuth, requirePermission } from '@/lib/auth/server-auth';
+import { getOverallScoresByInitiative } from '@/lib/goals/perform-goal-update';
 
 const INITIATIVES_PATH = path.join(process.cwd(), 'src', 'data', 'initiatives.json');
 
@@ -37,16 +38,15 @@ export async function GET(request) {
         MIN(c.category_name) AS category_name,
         (SELECT COUNT(*) FROM submission s WHERE s.initiative_id = i.initiative_id) AS submission_count,
         (SELECT COUNT(DISTINCT s.submitted_by_user_id) FROM submission s WHERE s.initiative_id = i.initiative_id AND s.submitted_by_user_id IS NOT NULL) AS participant_count,
-        (SELECT COUNT(*) FROM initiative_member im JOIN user u ON u.user_id = im.user_id WHERE im.initiative_id = i.initiative_id) AS member_count,
-        (SELECT AVG(
-          CASE WHEN g.target_value > 0 THEN (g.current_value / g.target_value) * 100 ELSE 0 END
-        ) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS avg_score
+        (SELECT COUNT(*) FROM initiative_member im JOIN user u ON u.user_id = im.user_id WHERE im.initiative_id = i.initiative_id) AS member_count
       FROM initiative i
       LEFT JOIN initiative_category ic ON ic.initiative_id = i.initiative_id
       LEFT JOIN category c ON c.category_id = ic.category_id
       GROUP BY i.initiative_id
     `).all();
-    const initiatives = rows.map(toInitiativeDto);
+    // Overall goal score (weighted, by each goal's scoring method), as on the Goals page.
+    const scores = getOverallScoresByInitiative(db);
+    const initiatives = rows.map((row) => toInitiativeDto({ ...row, overall_score: scores.get(row.initiative_id) ?? null }));
     return NextResponse.json({ initiatives });
   } catch (error) {
     console.error('Error fetching initiatives:', error);

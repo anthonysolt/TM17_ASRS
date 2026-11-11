@@ -5,6 +5,7 @@ import { getServiceContainer } from '@/lib/container/service-container';
 import { logAudit } from '@/lib/audit';
 import { toInitiativeDto } from '@/lib/adapters/initiative-adapter';
 import { requireAuth, requirePermission } from '@/lib/auth/server-auth';
+import { getOverallScoresByInitiative } from '@/lib/goals/perform-goal-update';
 
 const INITIATIVES_PATH = path.join(process.cwd(), 'src', 'data', 'initiatives.json');
 
@@ -38,10 +39,7 @@ export async function GET(request, { params }) {
         MIN(c.category_name) AS category_name,
         (SELECT COUNT(*) FROM submission s WHERE s.initiative_id = i.initiative_id) AS submission_count,
         (SELECT COUNT(DISTINCT s.submitted_by_user_id) FROM submission s WHERE s.initiative_id = i.initiative_id AND s.submitted_by_user_id IS NOT NULL) AS participant_count,
-        (SELECT COUNT(*) FROM initiative_member im JOIN user u ON u.user_id = im.user_id WHERE im.initiative_id = i.initiative_id) AS member_count,
-        (SELECT AVG(
-          CASE WHEN g.target_value > 0 THEN (g.current_value / g.target_value) * 100 ELSE 0 END
-        ) FROM initiative_goal g WHERE g.initiative_id = i.initiative_id) AS avg_score
+        (SELECT COUNT(*) FROM initiative_member im JOIN user u ON u.user_id = im.user_id WHERE im.initiative_id = i.initiative_id) AS member_count
       FROM initiative i
       LEFT JOIN initiative_category ic ON ic.initiative_id = i.initiative_id
       LEFT JOIN category c ON c.category_id = ic.category_id
@@ -51,7 +49,8 @@ export async function GET(request, { params }) {
     if (!row) {
       return NextResponse.json({ error: 'Initiative not found' }, { status: 404 });
     }
-    return NextResponse.json({ initiative: toInitiativeDto(row) });
+    const overallScore = getOverallScoresByInitiative(db, [row.initiative_id]).get(row.initiative_id) ?? null;
+    return NextResponse.json({ initiative: toInitiativeDto({ ...row, overall_score: overallScore }) });
   } catch (error) {
     console.error('Error fetching initiative:', error);
     return NextResponse.json({ error: 'Failed to load initiative' }, { status: 500 });
@@ -101,7 +100,8 @@ export async function PUT(request, { params }) {
       payload: { name, description },
     });
 
-    return NextResponse.json({ success: true, initiative: toInitiativeDto(updated) });
+    const overallScore = getOverallScoresByInitiative(db, [updated.initiative_id]).get(updated.initiative_id) ?? null;
+    return NextResponse.json({ success: true, initiative: toInitiativeDto({ ...updated, overall_score: overallScore }) });
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.code === '23505') {
       return NextResponse.json({ error: 'Initiative with the same name already exists' }, { status: 409 });

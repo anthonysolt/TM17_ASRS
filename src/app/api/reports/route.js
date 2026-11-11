@@ -16,6 +16,11 @@ import { logAudit } from '@/lib/audit';
 // import { generateReportInsights } from '@/lib/openai-report-insights';
 import { buildQuestionChartData, isQuestionFilterActive, rowsForAnalysis } from '@/lib/report-engine';
 import { capStoredRows } from '@/lib/reports/report-rows';
+import {
+  getMethodLabelForQuestionError, isMethodAllowedForQuestion, methodNeedsAnswer, resolveQuestionType,
+} from '@/lib/analysis-methods';
+import { answerMatcher, computeAnswerAnalysis } from '@/lib/answer-analysis';
+import { loadQuestionOptions } from '@/lib/goals/question-source';
 
 function startGenerationLog(db, payload) {
   return db.prepare(`
@@ -205,10 +210,34 @@ export async function POST(request) {
       versionNumber: question.version_number,
       column: question.column,
       type: question.field_type,
+      uiType: resolveQuestionType(question.field_type, question.validation_rules),
       method: selectionsById.get(question.field_id).method,
+      ...(selectionsById.get(question.field_id).answer ? { answer: selectionsById.get(question.field_id).answer } : {}),
       thresholdPct: 2,
       filter: selectionsById.get(question.field_id).filter || null,
     }));
+    // Answer options of questions using an answer-based method (by question id).
+    const answerOptions = new Map();
+    for (const analysis of questionAnalyses) {
+      if (!isMethodAllowedForQuestion(analysis.method, analysis.uiType)) {
+        return NextResponse.json(
+          { error: getMethodLabelForQuestionError(analysis.method, analysis.label) },
+          { status: 400 }
+        );
+      }
+      if (methodNeedsAnswer(analysis.method)) {
+        const options = loadQuestionOptions(db, initiativeId, analysis.id);
+        // A target that isn't one of the options (typo, renamed option) would
+        // otherwise read as "0 responses chose it".
+        if (options.length > 0 && !answerMatcher(analysis.answer, options).option) {
+          return NextResponse.json(
+            { error: `"${analysis.answer}" is not an answer option for the question "${analysis.label}"` },
+            { status: 400 }
+          );
+        }
+        answerOptions.set(analysis.id, options);
+      }
+    }
     for (const analysis of questionAnalyses) {
       const validation = reportEngine.validateTrendConfig({
         variables: [analysis.column], enabledCalc: true, enabledDisplay: true,
@@ -262,11 +291,13 @@ export async function POST(request) {
       }
     }
 
+    const trendContext = { initiativeId, reportName: payload.name || '' };
     const trendData = questionAnalyses.flatMap((analysis) => {
-      return reportEngine.computeTrendData(rowsForAnalysis(filteredData, analysis), analysis.trendConfig, {
-        initiativeId,
-        reportName: payload.name || '',
-      });
+      const rows = rowsForAnalysis(filteredData, analysis);
+      if (methodNeedsAnswer(analysis.method)) {
+        return [computeAnswerAnalysis(rows, analysis.column, analysis.method, analysis.answer, answerOptions.get(analysis.id) || [], trendContext)];
+      }
+      return reportEngine.computeTrendData(rows, analysis.trendConfig, trendContext);
     });
 
     // Optional AI insights generation

@@ -107,9 +107,9 @@ export function queryInitiativeQuestions(database, initiativeId, rootFieldIds = 
 
   // One pass over the initiative's placements, keeping the latest per root.
   return database.prepare(`
-    SELECT field_id, field_key, field_label, field_type, display_order, version_number, is_active
+    SELECT field_id, field_key, field_label, field_type, validation_rules, display_order, version_number, is_active
     FROM (
-      SELECT fq.root_field_id AS field_id, f.field_key, f.field_label, f.field_type,
+      SELECT fq.root_field_id AS field_id, f.field_key, f.field_label, f.field_type, f.validation_rules,
              fvq.display_order, fv.version_number,
              CASE WHEN SUM(CASE WHEN fv.status = 'published' THEN 1 ELSE 0 END)
                     OVER (PARTITION BY fq.root_field_id) > 0 THEN 1 ELSE 0 END AS is_active,

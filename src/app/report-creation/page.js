@@ -8,7 +8,7 @@ import { getInitiatives, getReportData, getReportGoals, getReportQuestions } fro
 
 import StepIndicator from '@/components/report-steps/StepIndicator';
 import StepConfig from '@/components/report-steps/StepConfig';
-import StepQuestions from '@/components/report-steps/StepQuestions';
+import StepQuestions, { hasMissingTargetAnswer } from '@/components/report-steps/StepQuestions';
 import StepFilters, { hasInvalidDateRange, hasInvalidQuestionFilter } from '@/components/report-steps/StepFilters';
 import StepGoals from '@/components/report-steps/StepGoals';
 import { getReportStatusLabel } from '@/lib/report-status';
@@ -167,6 +167,9 @@ export default function ReportCreationPage() {
     if (currentStep === 0) {
       return reportConfig.selectedInitiative && reportConfig.reportName.trim().length > 0;
     }
+    if (currentStep === 1) {
+      return !hasMissingTargetAnswer(reportConfig.questionSelections);
+    }
     if (currentStep === 2) {
       return !hasInvalidQuestionFilter(reportConfig.questionSelections) && !hasInvalidDateRange(reportConfig);
     }
@@ -293,6 +296,7 @@ export default function ReportCreationPage() {
           <StepPreview
             reportConfig={reportConfig}
             tableData={tableData}
+            questions={questions}
             selectedGoals={goals.filter((goal) => reportConfig.goalIds.includes(goal.goal_id))}
             onGenerate={handleGenerate}
             isSubmitting={isSubmitting}

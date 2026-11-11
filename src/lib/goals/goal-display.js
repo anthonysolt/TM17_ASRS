@@ -27,19 +27,29 @@ export function formatPercentage(value) {
   return numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-/** Status label and pill class, including value-aware threshold goal states. */
+/**
+ * Status label and pill class, from the goal's actual value against its target
+ * (not the score, which is capped at 100%):
+ * - Exceeded: current value above the target
+ * - Reached:  current value equal to the target
+ * - On Track: below target, but linear progress is at least 70%
+ * - Not Met:  otherwise
+ * Falls back to the score when the values are missing or the target is not positive.
+ */
 export function getGoalStatus(goal) {
-  if (goal.scoring_method === 'threshold') {
-    const currentValue = Number(goal.current_value);
-    const targetValue = Number(goal.target_value);
+  const currentValue = Number(goal.current_value);
+  const targetValue = Number(goal.target_value);
 
-    if (currentValue < targetValue) return { label: 'Not Met', pill: 'pill-yellow' };
-    if (currentValue === targetValue) return { label: 'Reached', pill: 'pill-green' };
-    return { label: 'Exceeded', pill: 'pill-green' };
+  if (goal.current_value == null || goal.current_value === '' || !Number.isFinite(currentValue)
+    || !Number.isFinite(targetValue) || targetValue <= 0) {
+    if (Number(goal.score) >= 100) return { label: 'Reached', pill: 'pill-green' };
+    if (goal.scoring_method === 'linear' && Number(goal.score) >= 70) return { label: 'On Track', pill: 'pill-green' };
+    return { label: 'Not Met', pill: 'pill-yellow' };
   }
 
-  if (goal.score >= 100) return { label: 'Exceeded', pill: 'pill-blue' };
-  if (goal.score >= 70) return { label: 'On Track', pill: 'pill-green' };
+  if (currentValue > targetValue) return { label: 'Exceeded', pill: 'pill-blue' };
+  if (currentValue === targetValue) return { label: 'Reached', pill: 'pill-green' };
+  if (goal.scoring_method === 'linear' && getGoalProgress(goal) >= 70) return { label: 'On Track', pill: 'pill-green' };
   return { label: 'Not Met', pill: 'pill-yellow' };
 }
 

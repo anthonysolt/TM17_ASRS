@@ -64,6 +64,9 @@ export default function FormCreationPage() {
   const [loadedUpdatedAt, setLoadedUpdatedAt] = useState(null);
   // Questions removed from this form in earlier edits (edit mode only).
   const [retiredQuestions, setRetiredQuestions] = useState([]);
+  // Saved questions removed in this edit: listed under Retired Questions right
+  // away (they are retired when the form is saved) and can be put back.
+  const [pendingRetired, setPendingRetired] = useState([]);
   const [retiredError, setRetiredError] = useState('');
   const [deletingRetiredId, setDeletingRetiredId] = useState(null);
 
@@ -233,8 +236,18 @@ export default function FormCreationPage() {
         'When you save, it will be retired: it no longer appears on the survey, but its existing responses are kept and still show in reports.'
       );
       if (!confirmed) return;
+      // Already-retired questions that were unretired in this edit go back to their own row.
+      if (question && !retiredQuestions.some(r => r.fieldId === fieldId)) {
+        setPendingRetired(prev => [...prev.filter(f => f.field_id !== fieldId), question]);
+      }
     }
     setSelectedFields(selectedFields.filter(f => f.field_id !== fieldId));
+  };
+
+  // Put back a question removed in this edit (before saving).
+  const undoRemove = (field) => {
+    setPendingRetired(prev => prev.filter(f => f.field_id !== field.field_id));
+    if (!selectedFields.some(sf => sf.field_id === field.field_id)) setSelectedFields([...selectedFields, field]);
   };
 
   const updateFieldConfig = (fieldId, key, value) => {
@@ -898,16 +911,35 @@ export default function FormCreationPage() {
               {retiredError}
             </div>
           )}
-          {editingTemplateId && retiredQuestions.length > 0 && (
+          {editingTemplateId && (retiredQuestions.length > 0 || pendingRetired.length > 0) && (
             <div className="card" style={{ padding: '20px' }}>
               <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' }}>
-                Retired Questions ({retiredQuestions.length})
+                Retired Questions ({retiredQuestions.length + pendingRetired.length})
               </h3>
               <p style={{ fontSize: '12px', color: '#9CA3AF', margin: '0 0 12px' }}>
                 Removed from this survey. Their responses are kept and still appear in reports.
                 Unretire to put one back (restored when you save), or delete it permanently.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {pendingRetired.map(field => {
+                  const typeLabel = QUESTION_TYPE_DEFS.find(t => t.type === field.field_type)?.label || field.field_type;
+                  return (
+                    <div key={`pending-${field.field_id}`} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px',
+                      border: '1px dashed #F59E0B', borderRadius: '6px', fontSize: '12px', backgroundColor: '#FFFBEB',
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: '#111827', overflowWrap: 'anywhere' }}>{field.field_label}</div>
+                        <div style={{ color: '#92400E', marginTop: '2px' }}>{typeLabel} · retired when you save</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => undoRemove(field)}
+                        style={{ padding: '4px 8px', border: '1px solid #E5E7EB', borderRadius: '6px', background: '#fff', color: '#E67E22', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                      >Undo</button>
+                    </div>
+                  );
+                })}
                 {retiredQuestions.map(question => {
                   const pending = selectedFields.some(sf => sf.field_id === question.fieldId);
                   const typeLabel = QUESTION_TYPE_DEFS.find(t => t.type === question.type)?.label || question.type;

@@ -4,9 +4,10 @@ import { useMemo, useState } from 'react';
 import DataTable from '@/components/DataTable';
 import GoalsTable from '@/components/GoalsTable';
 import { getReportStatusLabel } from '@/lib/report-status';
-import { computeTrendData, isQuestionFilterActive, processReportData, rowsForAnalysis, validateTrendConfig } from '@/lib/report-engine';
+import { isQuestionFilterActive, processReportData } from '@/lib/report-engine';
 import { describeQuestionFilter, describeQuestionFilterScope } from '@/lib/report-view-filters';
 import { formatDateRange, isDateRangeActive } from '@/lib/report-date-range';
+import { analyzeQuestionSelection } from '@/lib/question-analysis';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell,
@@ -14,7 +15,7 @@ import {
 
 const COLORS = ['#C0392B', '#E67E22', '#F39C12', '#27AE60', '#2980B9'];
 
-export default function StepPreview({ reportConfig, tableData, selectedGoals = [], onGenerate, isSubmitting }) {
+export default function StepPreview({ reportConfig, tableData, questions = [], selectedGoals = [], onGenerate, isSubmitting }) {
   const selectedInitiativeId = reportConfig.selectedInitiative?.id;
   const questionSelections = useMemo(
     () => reportConfig.questionSelections || [],
@@ -56,17 +57,13 @@ export default function StepPreview({ reportConfig, tableData, selectedGoals = [
     );
     return {
       ...processed,
-      trendData: questionAnalyses.flatMap((selection) => {
-        const trendValidation = validateTrendConfig({
-          variables: [selection.label], enabledCalc: true, enabledDisplay: true,
-          method: selection.method, thresholdPct: 2,
-        }, attributes);
-        return trendValidation.valid
-          ? computeTrendData(rowsForAnalysis(processed.filteredData, selection), trendValidation.normalized, { initiativeId: selectedInitiativeId, reportName })
-          : [];
-      }),
+      trendData: questionAnalyses.flatMap((selection) => analyzeQuestionSelection(processed.filteredData, selection, {
+        options: questions.find((question) => question.id === selection.id)?.options || [],
+        attributes,
+        context: { initiativeId: selectedInitiativeId, reportName },
+      })),
     };
-  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, questionSelections, selectedInitiativeId, reportName]);
+  }, [tableData, reportConfig.filters, reportConfig.expressions, reportConfig.sorts, previewAttributes, questionSelections, questions, selectedInitiativeId, reportName]);
 
   // Build human-readable config summary
   const activeQuestionFilters = questionSelections.filter((selection) => isQuestionFilterActive(selection.filter));

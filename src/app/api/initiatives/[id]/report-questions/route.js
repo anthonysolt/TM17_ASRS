@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getServiceContainer } from '@/lib/container/service-container';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { queryInitiativeQuestions } from '@/lib/query-helpers';
+import { resolveQuestionType } from '@/lib/analysis-methods';
+import { loadQuestionOptions } from '@/lib/goals/question-source';
 
 export async function GET(request, { params }) {
   try {
@@ -26,11 +28,14 @@ export async function GET(request, { params }) {
     const questions = queryInitiativeQuestions(db, initiativeId).map((question) => ({
       id: question.field_id,
       label: question.field_label || `Question ${question.field_id}`,
-      type: question.field_type,
+      // Builder type (e.g. likert_agreement, radio), which decides the analysis methods offered.
+      type: resolveQuestionType(question.field_type, question.validation_rules),
       display_order: question.display_order,
       version: question.version_number,
       // False once the question was removed from its survey; its answers are kept.
       active: Number(question.is_active) === 1,
+      // Current answer options, for the answer-based methods' target answer.
+      options: loadQuestionOptions(db, initiativeId, question.field_id),
     }));
 
     return NextResponse.json({ questions });

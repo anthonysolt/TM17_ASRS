@@ -730,6 +730,7 @@ export default function InitiativeManagePage({ params }) {
         <SurveyResponsesView
           templates={surveyTemplates}
           initiativeId={id}
+          recentPageSize={100}
           onDeleted={reloadResponseCounts}
           onNotify={notify}
         />

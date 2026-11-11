@@ -172,7 +172,7 @@ export default function SurveyResponsesView({
   if (loading && rows.length === 0) countLabel = 'Loading…';
   else if (total > rows.length) countLabel = `Showing ${rows.length} of ${total}`;
   else countLabel = `${total} response${total !== 1 ? 's' : ''}`;
-  if (showRecent && !(loading && rows.length === 0)) countLabel = `Most recent: ${countLabel.charAt(0).toLowerCase()}${countLabel.slice(1)}`;
+  if (showRecent && total > rows.length && !(loading && rows.length === 0)) countLabel = `Most recent: ${countLabel.charAt(0).toLowerCase()}${countLabel.slice(1)}`;
 
   const remaining = Math.max(0, total - rows.length);
   const loadMoreButton = viewKey && remaining > 0 && !loadError ? (
@@ -235,7 +235,7 @@ export default function SurveyResponsesView({
               value={templateId}
               onChange={setChosenTemplateId}
               options={surveyOptions.map((t) => ({ value: String(t.id), label: t.title }))}
-              emptyLabel="Select a survey"
+              emptyLabel={recentPageSize ? 'All surveys' : 'Select a survey'}
             />
           )}
           {viewKey && (

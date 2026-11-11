@@ -456,7 +456,7 @@ function stableHash(input) {
   return (hash >>> 0).toString(36).toUpperCase();
 }
 
-function createDeterministicTrendId(context, attributes, method, rows) {
+export function createDeterministicTrendId(context, attributes, method, rows) {
   const seed = JSON.stringify({
     initiativeId: context?.initiativeId || null,
     reportName: context?.reportName || '',
@@ -490,7 +490,10 @@ export function validateTrendConfig(trendConfig, availableAttributes = []) {
   const source = trendConfig || {};
   const enabledCalc = source.enabledCalc !== false;
   const enabledDisplay = source.enabledDisplay !== false;
-  const supportedMethods = ['delta_halves', 'linear_slope', 'most_popular', 'average', 'least_common'];
+  const supportedMethods = [
+    'delta_halves', 'linear_slope', 'most_popular', 'average', 'least_common',
+    'answer_count', 'answer_share', 'answer_is_most_common',
+  ];
   const method = supportedMethods.includes(source.method) ? source.method : 'delta_halves';
   const thresholdPct = Number.isFinite(Number(source.thresholdPct))
     ? Math.max(0, Math.min(100, Number(source.thresholdPct)))

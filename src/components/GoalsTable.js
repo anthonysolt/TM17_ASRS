@@ -12,7 +12,14 @@
 
 import { Fragment, useState } from 'react';
 import { apiFetch } from '@/lib/api/client';
-import { GOAL_SOURCE_METHODS, methodNeedsAnswer } from '@/lib/analysis-methods';
+import {
+  GOAL_SOURCE_METHODS,
+  getGoalSourceMethodLabel,
+  getMethodsForQuestion,
+  getQuestionKind,
+  isMethodAllowedForQuestion,
+  methodNeedsAnswer,
+} from '@/lib/analysis-methods';
 import { getScoreColor } from '@/lib/score-utils';
 import {
   formatPercentage,
@@ -53,13 +60,37 @@ export function QuestionSourceFields({ goal, questions, onChange }) {
   const answerIsOption = !goal.source_answer || options.some((option) =>
     [option.value, option.label].some((text) => String(text).toLowerCase() === String(goal.source_answer).toLowerCase()));
 
-  const changeMethod = (method) => {
+  // Only the methods that fit this question's type; a saved method that no
+  // longer fits stays listed (marked) so it can be seen and changed.
+  const methods = question ? getMethodsForQuestion(question.type) : GOAL_SOURCE_METHODS;
+  const currentMethodUnavailable = isSourced && question && goal.source_method
+    && !isMethodAllowedForQuestion(goal.source_method, question.type);
+
+  // Suggest the scoring that fits the method; it can still be changed.
+  const methodChanges = (method) => {
     const changes = { source_method: method };
-    // Suggest the scoring that fits the method; it can still be changed.
-    if (method === 'answer_is_most_common') changes.scoring_method = 'binary';
+    // "Answer is most common" is 1 or 0, so it is met when it reaches a target of 1.
+    if (method === 'answer_is_most_common') Object.assign(changes, { scoring_method: 'binary', target_value: 1 });
     else if (methodNeedsAnswer(method)) changes.scoring_method = 'linear';
     if (!methodNeedsAnswer(method)) changes.source_answer = '';
-    onChange(changes);
+    return changes;
+  };
+  const changeMethod = (method) => onChange(methodChanges(method));
+
+  const changeQuestion = (questionId) => {
+    if (!questionId) {
+      onChange({ source_root_field_id: '', source_method: '', source_answer: '' });
+      return;
+    }
+    const next = questions.find((candidate) => String(candidate.id) === String(questionId));
+    const keep = goal.source_method && isMethodAllowedForQuestion(goal.source_method, next?.type);
+    // A goal needs a number: average for numeric questions, otherwise the share
+    // of a chosen answer, else the first method the question allows (e.g. dates).
+    const preferred = getQuestionKind(next?.type) === 'numeric' ? 'average' : 'answer_share';
+    const method = keep ? goal.source_method
+      : isMethodAllowedForQuestion(preferred, next?.type) ? preferred
+        : getMethodsForQuestion(next?.type)[0].value;
+    onChange({ source_root_field_id: questionId, ...methodChanges(method), source_answer: '' });
   };
 
   return (
@@ -69,11 +100,7 @@ export function QuestionSourceFields({ goal, questions, onChange }) {
           <label style={labelStyle}>Current Value Source</label>
           <select
             value={goal.source_root_field_id || ''}
-            onChange={(e) => onChange({
-              source_root_field_id: e.target.value,
-              source_method: e.target.value ? (goal.source_method || 'average') : '',
-              source_answer: '',
-            })}
+            onChange={(e) => changeQuestion(e.target.value)}
             style={{ ...inputStyle, cursor: 'pointer' }}
           >
             <option value="">Enter manually</option>
@@ -98,7 +125,12 @@ export function QuestionSourceFields({ goal, questions, onChange }) {
             style={{ ...inputStyle, cursor: isSourced ? 'pointer' : 'default', opacity: isSourced ? 1 : 0.6 }}
           >
             {!isSourced && <option value="">—</option>}
-            {GOAL_SOURCE_METHODS.map((method) => (
+            {currentMethodUnavailable && (
+              <option value={goal.source_method}>
+                {getGoalSourceMethodLabel(goal.source_method)} (not available for this question)
+              </option>
+            )}
+            {methods.map((method) => (
               <option key={method.value} value={method.value}>{method.label}</option>
             ))}
           </select>
@@ -327,7 +359,7 @@ export default function GoalsTable({
         onGoalsChanged?.();
         return;
       }
-      if (!res.ok) throw new Error(data.error || 'Failed to update goal');
+      if (!res.ok) throw new Error([data.error || 'Failed to update goal', data.details].filter(Boolean).join(': '));
 
       onMessage?.('Goal updated successfully!');
       closeEditing(goalId);

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import db, { initializeDatabase } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/server-auth';
 import { queryInitiativeQuestions } from '@/lib/query-helpers';
+import { resolveQuestionType } from '@/lib/analysis-methods';
 import { loadQuestionOptions } from '@/lib/goals/question-source';
 
 // GET - Survey questions a goal can source its current value from.
@@ -20,7 +21,7 @@ export async function GET(request) {
     const questions = queryInitiativeQuestions(db, initiativeId).map((question) => ({
       id: question.field_id,
       label: question.field_label || `Question ${question.field_id}`,
-      type: question.field_type,
+      type: resolveQuestionType(question.field_type, question.validation_rules),
       active: Number(question.is_active) === 1,
       // Current answer options, for answer-based goal methods.
       options: loadQuestionOptions(db, initiativeId, question.field_id),

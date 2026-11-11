@@ -36,3 +36,71 @@ export function methodNeedsAnswer(value) {
 export function getGoalSourceMethodLabel(value) {
   return GOAL_SOURCE_METHODS.find((method) => method.value === value)?.label || value;
 }
+
+// ---------------------------------------------------------------------------
+// Methods that fit each question type (report builder and goal editor).
+// ---------------------------------------------------------------------------
+
+/** Every question analysis method: the five shared ones plus the answer-based ones. */
+export const QUESTION_METHODS = GOAL_SOURCE_METHODS;
+export const QUESTION_METHOD_VALUES = GOAL_SOURCE_METHOD_VALUES;
+
+const ANSWER_METHOD_VALUES = GOAL_ANSWER_METHODS.map((method) => method.value);
+
+const NUMERIC_TYPES = new Set(['number', 'rating', 'likert_agreement', 'likert_good_bad', 'likert_like_dislike']);
+const CHOICE_TYPES = new Set(['yesno', 'select', 'radio', 'choice', 'boolean']);
+const MULTI_TYPES = new Set(['checkbox', 'multiselect']);
+const DATE_TYPES = new Set(['date']);
+
+const METHODS_BY_KIND = {
+  numeric: QUESTION_METHOD_VALUES,
+  choice: ['most_popular', 'least_common', 'delta_halves', ...ANSWER_METHOD_VALUES],
+  multi: ['most_popular', 'least_common', ...ANSWER_METHOD_VALUES],
+  text: ['most_popular', 'least_common', ...ANSWER_METHOD_VALUES],
+  date: ['most_popular', 'least_common'],
+};
+
+/**
+ * Broad kind of a question, from its builder type (validation_rules.ui_type)
+ * or, failing that, its stored field_type: numeric | choice | multi | text | date.
+ */
+export function getQuestionKind(type) {
+  if (NUMERIC_TYPES.has(type)) return 'numeric';
+  if (CHOICE_TYPES.has(type)) return 'choice';
+  if (MULTI_TYPES.has(type)) return 'multi';
+  if (DATE_TYPES.has(type)) return 'date';
+  return 'text';
+}
+
+/** The methods ({ value, label }) that can be applied to a question of this type. */
+export function getMethodsForQuestion(type) {
+  const allowed = METHODS_BY_KIND[getQuestionKind(type)];
+  return QUESTION_METHODS.filter((method) => allowed.includes(method.value));
+}
+
+export function isMethodAllowedForQuestion(method, type) {
+  return METHODS_BY_KIND[getQuestionKind(type)].includes(method);
+}
+
+/** Method preselected for a question: a trend where one fits, otherwise the most popular answer. */
+export function getDefaultMethodForQuestion(type) {
+  return isMethodAllowedForQuestion('delta_halves', type) ? 'delta_halves' : 'most_popular';
+}
+
+/** Builder type of a question row: validation_rules.ui_type when set, else field_type. */
+export function resolveQuestionType(fieldType, validationRules) {
+  if (validationRules) {
+    try {
+      const rules = typeof validationRules === 'string' ? JSON.parse(validationRules) : validationRules;
+      if (rules?.ui_type) return rules.ui_type;
+    } catch {
+      // Malformed metadata: fall back to the stored type.
+    }
+  }
+  return fieldType;
+}
+
+/** Error text for a method that does not fit a question. */
+export function getMethodLabelForQuestionError(method, questionLabel) {
+  return `"${getGoalSourceMethodLabel(method)}" cannot be used for the question "${questionLabel}"`;
+}

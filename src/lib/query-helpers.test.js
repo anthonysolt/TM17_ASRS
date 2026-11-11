@@ -9,7 +9,8 @@ function createTestDb() {
       field_id INTEGER PRIMARY KEY,
       field_key TEXT,
       field_label TEXT,
-      field_type TEXT
+      field_type TEXT,
+      validation_rules TEXT
     );
 
     CREATE TABLE form (

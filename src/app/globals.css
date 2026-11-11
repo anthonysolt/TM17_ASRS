@@ -529,15 +529,6 @@ body {
   flex-shrink: 0;
 }
 
-.sidebar-user {
-  margin-top: auto;
-  padding: 16px 20px;
-  border-top: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .sidebar-user-avatar {
   width: 36px;
   height: 36px;
@@ -551,17 +542,6 @@ body {
   font-weight: 600;
   flex-shrink: 0;
   position: relative;
-}
-
-.sidebar-user-name {
-  color: var(--color-text-primary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.sidebar-user-role {
-  color: var(--color-text-secondary);
-  font-size: 11px;
 }
 
 .main-content {

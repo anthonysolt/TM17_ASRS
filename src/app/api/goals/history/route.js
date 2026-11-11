@@ -1,6 +1,25 @@
 import { NextResponse } from 'next/server';
 import db, { initializeDatabase } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/server-auth';
+import { hasInvalidDateRange } from '@/lib/report-date-range';
+import { buildTimeline } from '@/lib/goals/goal-history';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-02-31). */
+function isValidIsoDate(value) {
+  if (!DATE_RE.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+/** 12 months before `endDate` (YYYY-MM-DD), or before today when there is none. */
+function defaultFromDate(endDate) {
+  const date = endDate ? new Date(`${endDate}T00:00:00Z`) : new Date();
+  date.setUTCFullYear(date.getUTCFullYear() - 1);
+  return date.toISOString().slice(0, 10);
+}
 
 export async function GET(request) {
   try {
@@ -29,72 +48,54 @@ export async function GET(request) {
       );
     }
 
-    const history = db.prepare(`
-      SELECT 
-        gph.history_id,
-        gph.goal_id,
-        g.goal_name,
-        g.target_value AS current_target,
-        g.weight,
-        gph.recorded_value,
-        gph.target_value,
-        gph.score,
-        gph.recorded_at
-      FROM goal_progress_history gph
-      JOIN initiative_goal g ON gph.goal_id = g.goal_id
-      WHERE gph.initiative_id = ?
-      ORDER BY gph.recorded_at ASC
-    `).all(initiativeId);
-
-    const dateMap = {};
-
-    for (const record of history) {
-      const date = record.recorded_at.split(' ')[0];
-
-      if (!dateMap[date]) {
-        dateMap[date] = {
-          date,
-          recorded_at: record.recorded_at,
-          goals: {},
-        };
+    // Optional range as YYYY-MM-DD (inclusive). Without a from date it covers
+    // the 12 months up to the to date (or up to today).
+    const to = searchParams.get('to') || null;
+    const requestedFrom = searchParams.get('from') || null;
+    for (const [name, value] of [['from', requestedFrom], ['to', to]]) {
+      if (value && !isValidIsoDate(value)) {
+        return NextResponse.json({ error: `Invalid ${name} date; use a real date as YYYY-MM-DD` }, { status: 400 });
       }
-
-      dateMap[date].goals[record.goal_id] = {
-        goal_id: record.goal_id,
-        goal_name: record.goal_name,
-        recorded_value: record.recorded_value,
-        target_value: record.target_value,
-        score: record.score,
-        weight: record.weight,
-      };
+    }
+    const from = requestedFrom || defaultFromDate(to);
+    if (hasInvalidDateRange({ startDate: from, endDate: to })) {
+      return NextResponse.json({ error: 'The from date is after the to date' }, { status: 400 });
     }
 
-    const timeline = Object.values(dateMap).map((entry) => {
-      const goals = Object.values(entry.goals);
+    // Each goal's last recorded value before the range, so the first day of the
+    // timeline starts from every goal's known value.
+    const seedRows = db.prepare(`
+      SELECT DISTINCT ON (gph.goal_id)
+        gph.goal_id, gph.recorded_value, gph.target_value, gph.score, gph.recorded_at
+      FROM goal_progress_history gph
+      WHERE gph.initiative_id = ? AND substr(gph.recorded_at, 1, 10) < ?
+      ORDER BY gph.goal_id, gph.recorded_at DESC, gph.history_id DESC
+    `).all(initiativeId, from);
 
-      let weightedSum = 0;
-      let totalWeight = 0;
-      for (const goal of goals) {
-        weightedSum += goal.score * goal.weight;
-        totalWeight += goal.weight;
-      }
+    // The last value per goal per day inside the range (at most goals x days rows).
+    const dailyRows = db.prepare(`
+      SELECT DISTINCT ON (gph.goal_id, substr(gph.recorded_at, 1, 10))
+        gph.goal_id, gph.recorded_value, gph.target_value, gph.score, gph.recorded_at,
+        substr(gph.recorded_at, 1, 10) AS day
+      FROM goal_progress_history gph
+      WHERE gph.initiative_id = ?
+        AND substr(gph.recorded_at, 1, 10) >= ?
+        AND (?::text IS NULL OR substr(gph.recorded_at, 1, 10) <= ?)
+      ORDER BY gph.goal_id, substr(gph.recorded_at, 1, 10), gph.recorded_at DESC, gph.history_id DESC
+    `).all(initiativeId, from, to, to);
 
-      const overallScore = totalWeight > 0
-        ? parseFloat((weightedSum / totalWeight).toFixed(2))
-        : 0;
+    const goals = new Map(
+      db.prepare('SELECT goal_id, goal_name, weight FROM initiative_goal WHERE initiative_id = ?')
+        .all(initiativeId)
+        .map((goal) => [goal.goal_id, goal])
+    );
 
-      return {
-        date: entry.date,
-        overallScore,
-        targetScore: 100,
-        goalBreakdown: goals,
-      };
-    });
-
+    const timeline = buildTimeline(seedRows, dailyRows, goals, from);
     return NextResponse.json({
       initiative: initiative,
       timeline,
-      totalSnapshots: history.length,
+      range: { from, to },
+      totalSnapshots: dailyRows.length,
     });
   } catch (error) {
     console.error('Error fetching goal history:', error);

@@ -34,11 +34,11 @@ export default function ManageSurveysPage() {
   const fetchTemplates = async () => {
     try {
       const res = await fetch('/api/surveys/templates');
-      if (!res.ok) throw new Error('Failed to load survey templates');
+      if (!res.ok) throw new Error('Failed to load surveys');
       const data = await res.json();
       setTemplates(Array.isArray(data) ? data : []);
     } catch (err) {
-      setError(err.message || 'Unable to load survey templates');
+      setError(err.message || 'Unable to load surveys');
     }
   };
 

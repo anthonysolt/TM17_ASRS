@@ -108,6 +108,10 @@ export default function GoalsPage() {
       const data = await res.json();
       setGoals(data.goals || []);
       setOverallScore(data.overallScore || 0);
+      // Keep the initiative card's goal count current after adds and deletes.
+      setInitiatives((previous) => previous.map((init) => (
+        String(init.initiative_id) === String(initiativeId) ? { ...init, goal_count: (data.goals || []).length } : init
+      )));
       return data.goals || [];
     } catch (err) {
       console.error(err);
@@ -164,7 +168,7 @@ export default function GoalsPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create goal');
+      if (!res.ok) throw new Error([data.error || 'Failed to create goal', data.details].filter(Boolean).join(': '));
 
       setMessage('Goal created successfully!');
       setShowAddForm(false);
@@ -195,7 +199,7 @@ export default function GoalsPage() {
     switch (method) {
       case 'linear': return 'Linear (proportional)';
       case 'threshold': return 'Threshold (all-or-nothing at target)';
-      case 'binary': return 'Binary (any progress = 100%)';
+      case 'binary': return 'Binary (target reached = 100%)';
       default: return method;
     }
   }
@@ -269,11 +273,13 @@ export default function GoalsPage() {
                   onMouseEnter={(e) => { if (!isSelected) { e.currentTarget.style.borderColor = '#E67E22'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(230,126,34,.12)'; } }}
                   onMouseLeave={(e) => { if (!isSelected) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none'; } }}
                 >
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#111827', marginBottom: 4 }}>
-                    {init.initiative_name}
-                  </div>
-                  <div style={{ fontSize: 12, color: isSelected ? '#E67E22' : '#9CA3AF' }}>
-                    {isSelected ? 'Selected' : 'Click to manage goals'}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>
+                      {init.initiative_name}
+                    </span>
+                    <span style={{ fontSize: 12, color: isSelected ? '#E67E22' : '#6B7280', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {Number(init.goal_count) || 0} {Number(init.goal_count) === 1 ? 'goal' : 'goals'}
+                    </span>
                   </div>
                 </button>
               );
@@ -571,8 +577,8 @@ export default function GoalsPage() {
                     </div>
                   </div>
 
-                  {/* Display-only: threshold scoring stays all-or-nothing */}
-                  {goal.scoring_method === 'threshold' && (
+                  {/* Display-only: threshold and binary scoring stay all-or-nothing */}
+                  {(goal.scoring_method === 'threshold' || goal.scoring_method === 'binary') && (
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: 11, color: 'var(--color-text-light)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
                         Goal Progress

@@ -129,7 +129,7 @@ export default function SurveyPage() {
       setTemplateLoading(true);
       fetch(`/api/surveys/templates/${id}`)
         .then((res) => {
-          if (!res.ok) throw new Error('Template not found');
+          if (!res.ok) throw new Error('Survey not found');
           return res.json();
         })
         .then((templateData) => {
@@ -137,7 +137,7 @@ export default function SurveyPage() {
         })
         .catch((err) => {
           console.error('Error loading survey template:', err);
-          setError('Survey template not found. The link may be invalid or expired.');
+          setError('Survey not found. The link may be invalid or expired.');
         })
         .finally(() => {
           setTemplateLoading(false);
@@ -521,51 +521,46 @@ export default function SurveyPage() {
                 </div>
               ) : (
                 <>
-                  {isPreviewMode && userRole !== 'public' && (
-                    <div style={{ marginBottom: '1rem' }}>
-                      <button
-                        onClick={() => router.push('/manage-surveys')}
-                        className="btn-outline"
-                        style={{ marginBottom: '0.5rem' }}
-                      >
-                        &larr; Back to Manage Surveys
-                      </button>
-                      <div style={{
-                        padding: '0.5rem 1rem',
-                        backgroundColor: '#FEF3C7',
-                        border: '1px solid #FDE68A',
-                        borderRadius: '8px',
-                        fontSize: '0.85rem',
-                        color: '#92400E',
-                        fontWeight: 500,
-                      }}>
-                        Preview Mode — This is how the survey appears to participants.
-                      </div>
+                  {/* Return buttons: top-right corner of the survey card */}
+                  {(userRole !== 'public' || activeDistributions.length > 1) && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+                      {userRole !== 'public' ? (
+                        <button
+                          onClick={() => router.push('/manage-surveys')}
+                          className="btn-outline"
+                        >
+                          {isPreviewMode ? <>&larr; Back to Manage Surveys</> : 'Manage surveys'}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setShowSurveyPicker(true);
+                            setActiveDistribution(null);
+                            setSurveyTemplate(null);
+                            setTemplateResponses({});
+                            setSubmitted(false);
+                            setError(null);
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#E67E22', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', padding: 0 }}
+                        >
+                          &larr; Back to all surveys
+                        </button>
+                      )}
                     </div>
                   )}
-                  {userRole !== 'public' && !isPreviewMode && (
-                    <button
-                      onClick={() => router.push('/manage-surveys')}
-                      className="btn-outline"
-                      style={{ marginBottom: '1rem' }}
-                    >
-                      Manage surveys
-                    </button>
-                  )}
-                  {userRole === 'public' && activeDistributions.length > 1 && (
-                    <button
-                      onClick={() => {
-                        setShowSurveyPicker(true);
-                        setActiveDistribution(null);
-                        setSurveyTemplate(null);
-                        setTemplateResponses({});
-                        setSubmitted(false);
-                        setError(null);
-                      }}
-                      style={{ background: 'none', border: 'none', color: '#E67E22', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', marginBottom: '1rem', padding: 0 }}
-                    >
-                      &larr; Back to all surveys
-                    </button>
+                  {isPreviewMode && userRole !== 'public' && (
+                    <div style={{
+                      padding: '0.5rem 1rem',
+                      marginBottom: '1rem',
+                      backgroundColor: '#FEF3C7',
+                      border: '1px solid #FDE68A',
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      color: '#92400E',
+                      fontWeight: 500,
+                    }}>
+                      Preview Mode — This is how the survey appears to participants.
+                    </div>
                   )}
 
                   {/* Survey Title & Description */}

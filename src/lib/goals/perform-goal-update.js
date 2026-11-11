@@ -26,13 +26,20 @@ function isValidWeight(weight) {
 function computeGoalScore(goal) {
   const { current_value, target_value, scoring_method } = goal;
   switch (scoring_method) {
-    case 'linear':
-      if (target_value === 0) return 0;
-      return Math.min((current_value / target_value) * 100, 100);
+    case 'linear': {
+      // Same progress as the Goal Progress column, capped at 100. A negative
+      // value (e.g. a falling trend) scores 0 rather than pulling the overall
+      // score below zero.
+      const current = Number(current_value);
+      const target = Number(target_value);
+      if (!Number.isFinite(current) || !Number.isFinite(target) || target <= 0) return 0;
+      return Math.min(Math.max((current / target) * 100, 0), 100);
+    }
     case 'threshold':
       return current_value >= target_value ? 100 : 0;
     case 'binary':
-      return current_value > 0 ? 100 : 0;
+      // Met or not: full credit only once the target is reached.
+      return Number(current_value) >= Number(target_value) ? 100 : 0;
     default:
       return 0;
   }
@@ -90,6 +97,13 @@ function rebalanceGoalWeights(db, existing, requestedWeight) {
   return { editedWeight, adjustedGoals };
 }
 
+/** Linear and binary scores compare against the target, so it must be a positive number. */
+export function getTargetValueError(targetValue, scoringMethod) {
+  if (!['linear', 'binary'].includes(scoringMethod)) return null;
+  const target = Number(targetValue);
+  return Number.isFinite(target) && target > 0 ? null : 'Target value must be a number greater than 0';
+}
+
 /**
  * Apply a partial patch to an initiative_goal row. Records progress history when current_value changes.
  * @param {{ prepare(sql: string): { get(...values: unknown[]): unknown, run(...values: unknown[]): unknown } }} db
@@ -97,7 +111,7 @@ function rebalanceGoalWeights(db, existing, requestedWeight) {
  * @param {Record<string, unknown>} updates - subset of allowed fields
  * @param {{ userEmail: string }} ctx
  */
-export function performGoalUpdate(db, existing, updates, { userEmail }) {
+export function performGoalUpdate(db, existing, updates, { userEmail, recordHistory = true }) {
   const goal_id = existing.goal_id;
 
   // Threshold is no longer offered; goals already using it may keep it.
@@ -141,7 +155,7 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
 
   const updatedGoal = db.prepare('SELECT * FROM initiative_goal WHERE goal_id = ?').get(goal_id);
 
-  if (updates.current_value !== undefined) {
+  if (updates.current_value !== undefined && recordHistory) {
     db.prepare(`
       INSERT INTO goal_progress_history (goal_id, initiative_id, recorded_value, target_value, score)
       VALUES (?, ?, ?, ?, ?)
@@ -192,4 +206,45 @@ export function performGoalUpdate(db, existing, updates, { userEmail }) {
   return { goal: updatedGoal, adjustedGoals };
 }
 
-export { ALLOWED_FIELDS, computeGoalScore, rebalanceGoalWeights };
+/**
+ * An initiative's overall goal score: each goal's score weighted by its weight
+ * (the score shown on the Goals page). 0 when there are no goals or no weight.
+ */
+function computeOverallScore(goals) {
+  if (goals.length === 0) return 0;
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+
+  for (const goal of goals) {
+    const score = computeGoalScore(goal);
+    weightedSum += score * Number(goal.weight);
+    totalWeight += Number(goal.weight);
+  }
+
+  if (totalWeight === 0) return 0;
+  return parseFloat((weightedSum / totalWeight).toFixed(2));
+}
+
+/**
+ * Overall goal score per initiative, as a Map of initiative_id to score.
+ * Initiatives without goals are left out (callers show "no score").
+ * initiativeIds: limit to these initiatives; omit for all.
+ */
+function getOverallScoresByInitiative(db, initiativeIds = null) {
+  if (Array.isArray(initiativeIds) && initiativeIds.length === 0) return new Map();
+  const filter = Array.isArray(initiativeIds) ? `WHERE initiative_id IN (${initiativeIds.map(() => '?').join(', ')})` : '';
+  const goals = db.prepare(`
+    SELECT initiative_id, current_value, target_value, weight, scoring_method
+    FROM initiative_goal ${filter}
+  `).all(...(initiativeIds || []));
+
+  const byInitiative = new Map();
+  for (const goal of goals) {
+    if (!byInitiative.has(goal.initiative_id)) byInitiative.set(goal.initiative_id, []);
+    byInitiative.get(goal.initiative_id).push(goal);
+  }
+  return new Map([...byInitiative].map(([id, list]) => [id, computeOverallScore(list)]));
+}
+
+export { ALLOWED_FIELDS, computeGoalScore, computeOverallScore, getOverallScoresByInitiative, rebalanceGoalWeights };

@@ -151,6 +151,57 @@ describe('/api/reports POST question filters', () => {
     expect(results.summary.averageRating).toBe(3);
   });
 
+  test('answer-based methods report the target answer', async () => {
+    const res = await postReport([
+      { id: 10, method: 'answer_share', answer: 'Yes' },
+      { id: 11, method: 'answer_count', answer: '5' },
+    ]);
+    expect(res.status).toBe(200);
+    const { config, results } = savedSnapshot;
+    const share = results.trendData.find((trend) => trend.attributes.includes(ENJOY));
+    expect(share).toMatchObject({ analysisType: 'answer_share', result: '60%', responsesEvaluated: 5 });
+    const count = results.trendData.find((trend) => trend.attributes.includes(SATISFIED));
+    expect(count).toMatchObject({ analysisType: 'answer_count', result: 1 });
+    expect(config.questionSelections[0]).toMatchObject({ method: 'answer_share', answer: 'Yes' });
+  });
+
+  test('answer methods respect a whole-report filter', async () => {
+    const res = await postReport([
+      { id: 10, method: 'most_popular', filter: { scope: 'report', values: ['Yes'] } },
+      { id: 11, method: 'answer_share', answer: '5' },
+    ]);
+    expect(res.status).toBe(200);
+    const share = savedSnapshot.results.trendData.find((trend) => trend.attributes.includes(SATISFIED));
+    expect(share).toMatchObject({ result: '33.3%', responsesEvaluated: 3 });
+  });
+
+  test('rejects a target answer that is not one of the question options', async () => {
+    querySelectedQuestionDataMock.mockReturnValue({ tableData, questions: [questions[0]] });
+    const base = prepareMock.getMockImplementation();
+    prepareMock.mockImplementation((sql) => {
+      const query = String(sql || '');
+      if (query.includes('FROM form_version_questions fvq') && query.includes('LIMIT 1')) return { get: () => ({ field_id: 10 }) };
+      if (query.includes('FROM field_options')) {
+        return { all: () => [{ option_value: 'Yes', display_label: 'Yes' }, { option_value: 'No', display_label: 'No' }] };
+      }
+      return base(sql);
+    });
+
+    const typo = await postReport([{ id: 10, method: 'answer_share', answer: 'Yse' }]);
+    expect(typo.status).toBe(400);
+    expect((await typo.json()).error).toMatch(/"Yse" is not an answer option/);
+
+    // Matching is case-insensitive, as when the report is calculated.
+    expect((await postReport([{ id: 10, method: 'answer_share', answer: 'yes' }])).status).toBe(200);
+  });
+
+  test('rejects a method that does not fit the question type', async () => {
+    querySelectedQuestionDataMock.mockReturnValue({ tableData, questions: [questions[0]] });
+    const res = await postReport([{ id: 10, method: 'average' }]);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/cannot be used for the question "Do you enjoy it\?"/);
+  });
+
   test('question-only filter changes just that question', async () => {
     const res = await postReport([
       { id: 10, method: 'most_popular' },
